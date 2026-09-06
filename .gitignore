@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# Env / secrets
+.env
+backend/.env
+
+# Databases / stores
+backend/db/*.db
+backend/rag/chroma_store/
+
+# Node
+node_modules/
+frontend/dist/
+frontend/.vite/
+
+# TypeScript build artifacts
+*.tsbuildinfo
+frontend/vite.config.js
+frontend/vite.config.d.ts
+
+# Local dev server logs
+.logs/
+
+# tsc -b artifacts. vite.config.js in particular shadows vite.config.ts, so a
+# committed copy would make config edits appear to do nothing.
+frontend/vite.config.js
+frontend/vite.config.d.ts
+frontend/*.tsbuildinfo
+
+# OS / editor
+.DS_Store
+Thumbs.db

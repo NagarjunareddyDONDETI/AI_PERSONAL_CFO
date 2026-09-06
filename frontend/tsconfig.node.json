@@ -1,0 +1,18 @@
+{
+  "compilerOptions": {
+    "composite": true,
+    "skipLibCheck": true,
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "allowSyntheticDefaultImports": true,
+    "strict": true,
+    // `composite` forces TypeScript to emit. Without an outDir it wrote
+    // vite.config.js next to vite.config.ts, and Vite resolves .js ahead of .ts
+    // — so after any `npm run build`, every later edit to vite.config.ts was
+    // silently ignored in favour of the stale compiled copy. Keep the emit out
+    // of the source tree.
+    "outDir": "./node_modules/.tmp/tsconfig.node",
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.node.tsbuildinfo"
+  },
+  "include": ["vite.config.ts"]
+}

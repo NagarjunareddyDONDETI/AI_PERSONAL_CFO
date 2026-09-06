@@ -1,0 +1,53 @@
+services:
+  # Backend API (FastAPI)
+  - type: web
+    name: ai-personal-cfo-backend
+    env: python
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: DEFAULT_PROVIDER
+        value: auto
+      # Render will prompt you for these values when applying the blueprint
+      - key: GEMINI_API_KEY
+        sync: false
+      # Signs session tokens. Render generates a strong value and keeps it
+      # stable across deploys, so users stay signed in. Without this, every
+      # deploy would sign everyone out.
+      - key: AUTH_SECRET
+        generateValue: true
+      - key: ALLOWED_ORIGINS
+        # We will use * for initial testing. Once deployed, update this to your frontend URL.
+        value: "*"
+      # Where the SQLite database lives. This must sit on the persistent disk
+      # below, or every deploy wipes all accounts and statements.
+      - key: CFO_DB_PATH
+        value: /var/data/cfo.db
+    # Render's default filesystem is ephemeral. A disk is required for accounts
+    # and financial data to survive a redeploy. NOTE: disks need a paid
+    # instance type; on the free tier, remove this block and CFO_DB_PATH above
+    # and accept that data resets on each deploy.
+    disk:
+      name: cfo-data
+      mountPath: /var/data
+      sizeGB: 1
+
+  # Frontend Web App (Vite/React)
+  - type: web
+    name: ai-personal-cfo-frontend
+    env: static
+    rootDir: frontend
+    buildCommand: npm install && npm run build
+    staticPublishPath: ./dist
+    envVars:
+      - key: VITE_API_BASE
+        fromService:
+          type: web
+          name: ai-personal-cfo-backend
+          envVarKey: RENDER_EXTERNAL_URL
+    # Rewrite rules for Single Page Application routing
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
