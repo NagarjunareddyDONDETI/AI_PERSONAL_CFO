@@ -92,11 +92,11 @@ _LAST_WORKFLOW: dict[str, dict] = {}
 @app.on_event("startup")
 def _startup() -> None:
     database.init_db()
-    # Warm up Whisper + RAG in the background so the first request is fast.
-    import threading
-
-    threading.Thread(target=voice_service.preload, daemon=True).start()
-    threading.Thread(target=retriever.preload, daemon=True).start()
+    # Optionally warm up in the background if PRELOAD_MODELS is set
+    if os.getenv("PRELOAD_MODELS", "").lower() in ("1", "true", "yes"):
+        import threading
+        threading.Thread(target=voice_service.preload, daemon=True).start()
+        threading.Thread(target=retriever.preload, daemon=True).start()
 
 
 # ---------- Phase 0 ----------
