@@ -1,0 +1,148 @@
+name: CI/CD Pipeline & Deploy to Render
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      clear_cache:
+        description: 'Clear Render build cache before deploy'
+        required: false
+        default: 'false'
+        type: boolean
+
+jobs:
+  backend-ci:
+    name: Backend Tests & Lint
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio respx
+
+      - name: Run Pytest Suite
+        run: |
+          pytest tests -v
+
+  frontend-ci:
+    name: Frontend Build & Type Check
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install Dependencies
+        run: |
+          npm ci || npm install
+
+      - name: Type Check & Build
+        run: |
+          npm run build
+        env:
+          VITE_API_BASE: https://ai-cfo-backend-nxaf.onrender.com
+
+  deploy:
+    name: Deploy to Render
+    needs: [backend-ci, frontend-ci]
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      # Method 1: Deploy using Render API Key if RENDER_API_KEY secret is present
+      - name: Trigger Deploy via Render API
+        if: env.RENDER_API_KEY != ''
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          BACKEND_SERVICE_ID: srv-dap1l8p42hec738iuqj0
+          FRONTEND_SERVICE_ID: srv-dap1lbmk1f9s7395260g
+          CLEAR_CACHE: ${{ github.event.inputs.clear_cache == 'true' && 'clear' || 'do_not_clear' }}
+        run: |
+          echo "🚀 Triggering Render backend deployment..."
+          curl -f -s -X POST "https://api.render.com/v1/services/${BACKEND_SERVICE_ID}/deploys" \
+            -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            -H "Accept: application/json" \
+            -H "Content-Type: application/json" \
+            -d "{\"clearCache\": \"${CLEAR_CACHE}\"}" || echo "Warning: Backend deploy API returned an error"
+
+          echo "🚀 Triggering Render frontend deployment..."
+          curl -f -s -X POST "https://api.render.com/v1/services/${FRONTEND_SERVICE_ID}/deploys" \
+            -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            -H "Accept: application/json" \
+            -H "Content-Type: application/json" \
+            -d "{\"clearCache\": \"${CLEAR_CACHE}\"}" || echo "Warning: Frontend deploy API returned an error"
+
+      # Method 2: Deploy using Deploy Hook URLs if secrets are present
+      - name: Trigger Backend Deploy via Webhook
+        if: env.RENDER_BACKEND_DEPLOY_HOOK != ''
+        env:
+          RENDER_BACKEND_DEPLOY_HOOK: ${{ secrets.RENDER_BACKEND_DEPLOY_HOOK }}
+        run: |
+          echo "🚀 Triggering Backend Deploy Hook..."
+          curl -f -s -X POST "${RENDER_BACKEND_DEPLOY_HOOK}"
+
+      - name: Trigger Frontend Deploy via Webhook
+        if: env.RENDER_FRONTEND_DEPLOY_HOOK != ''
+        env:
+          RENDER_FRONTEND_DEPLOY_HOOK: ${{ secrets.RENDER_FRONTEND_DEPLOY_HOOK }}
+        run: |
+          echo "🚀 Triggering Frontend Deploy Hook..."
+          curl -f -s -X POST "${RENDER_FRONTEND_DEPLOY_HOOK}"
+
+      # Post-Deploy Health Check
+      - name: Verify Backend & Frontend Health
+        run: |
+          echo "⏳ Waiting for services to be healthy..."
+          sleep 10
+
+          echo "🔍 Checking Backend Health (https://ai-cfo-backend-nxaf.onrender.com/health)..."
+          for i in {1..30}; do
+            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" https://ai-cfo-backend-nxaf.onrender.com/health || true)
+            if [ "$HTTP_CODE" = "200" ]; then
+              echo "✅ Backend is healthy (HTTP 200)!"
+              break
+            fi
+            echo "Waiting for backend... (HTTP $HTTP_CODE, attempt $i/30)"
+            sleep 5
+          done
+
+          echo "🔍 Checking Frontend Availability (https://ai-cfo-frontend.onrender.com)..."
+          for i in {1..20}; do
+            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" https://ai-cfo-frontend.onrender.com || true)
+            if [ "$HTTP_CODE" = "200" ]; then
+              echo "✅ Frontend is available (HTTP 200)!"
+              break
+            fi
+            echo "Waiting for frontend... (HTTP $HTTP_CODE, attempt $i/20)"
+            sleep 3
+          done
