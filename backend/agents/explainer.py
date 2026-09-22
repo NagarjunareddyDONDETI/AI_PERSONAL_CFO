@@ -26,6 +26,27 @@ def _relevant_slice(intent: str, result: dict) -> dict:
         return {"savings_suggestions": result.get("savings_suggestions")}
     if intent == "whatif":
         return {"whatif_result": result.get("whatif_result")}
+    if intent == "goal":
+        # Goal feasibility is a function of surplus, so both are needed.
+        return {
+            "health_score": result.get("health_score"),
+            "monthly_summary": result.get("monthly_summary"),
+        }
+    if intent == "subscription":
+        # Recurring charges live in the category breakdown. Raw transactions are
+        # deliberately excluded: the slice is JSON-dumped into the prompt, and a
+        # full statement would crowd out everything else.
+        summary = result.get("monthly_summary") or {}
+        return {
+            "category_totals": summary.get("category_totals"),
+            "by_month_category": summary.get("by_month_category"),
+        }
+    if intent == "transaction_search":
+        return {"monthly_summary": result.get("monthly_summary")}
+    if intent == "general_finance":
+        # A financial-literacy question needs no personal figures; answering it
+        # from RAG alone also removes any chance of leaking unrelated numbers.
+        return {}
     # spending / default
     return {
         "monthly_summary": result.get("monthly_summary"),

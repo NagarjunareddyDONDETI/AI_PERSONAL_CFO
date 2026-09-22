@@ -72,6 +72,36 @@ User's new question: {query}
 Answer in 2-5 sentences, grounded in the user's numbers and the conversation above."""
 
 
+def prepare_turn(
+    query: str,
+    result: dict,
+    rag: dict,
+    history: list[dict] | None = None,
+    memory_context: str = "",
+) -> dict:
+    """Everything needed to answer a turn, except the LLM call itself.
+
+    Split out of ``converse`` so the streaming voice endpoint can reuse the exact
+    same intent routing, data slicing and prompt. If the two built their prompts
+    separately they would drift, and the same question would get different answers
+    depending on whether it was typed or spoken.
+
+    Returns ``{intent, prompt, sources, fallback}``, where ``fallback`` is the
+    deterministic templated answer to use when no LLM is available.
+    """
+    history = history or []
+    intent = route_intent(query)
+    data_slice = _relevant_slice(intent, result)
+    return {
+        "intent": intent,
+        "prompt": _build_prompt(
+            query, data_slice, rag.get("context", ""), history, memory_context
+        ),
+        "sources": rag.get("sources", []),
+        "fallback": _fallback_answer(intent, data_slice),
+    }
+
+
 def converse(
     query: str,
     result: dict,
@@ -87,11 +117,9 @@ def converse(
     caller's responsibility.
     """
     history = history or []
-    intent = route_intent(query)
-    data_slice = _relevant_slice(intent, result)
-    context = rag.get("context", "")
-
-    prompt = _build_prompt(query, data_slice, context, history, memory_context)
+    turn = prepare_turn(query, result, rag, history, memory_context)
+    intent = turn["intent"]
+    prompt = turn["prompt"]
 
     llm_response = llm_client.generate(prompt) if llm_client.is_configured() else None
 
@@ -102,7 +130,7 @@ def converse(
         return {
             "response": llm_response,
             "intent": intent,
-            "retrieved_context": rag.get("sources", []),
+            "retrieved_context": turn["sources"],
             "llm_used": True,
         }
 
@@ -112,9 +140,9 @@ def converse(
         logger.info("copilot LLM not configured, using deterministic fallback")
 
     return {
-        "response": _fallback_answer(intent, data_slice),
+        "response": turn["fallback"],
         "intent": intent,
-        "retrieved_context": rag.get("sources", []),
+        "retrieved_context": turn["sources"],
         "llm_used": False,
         "llm_error": llm_response if llm_response else None,
     }

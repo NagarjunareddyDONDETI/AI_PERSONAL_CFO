@@ -16,10 +16,16 @@ import AuthScreen from "./components/AuthScreen";
 import Dashboard from "./components/Dashboard";
 import Header from "./components/Header";
 import Landing from "./components/Landing";
+import MarketingLanding from "./components/marketing/MarketingLanding";
 
 type BackendState = "checking" | "online" | "offline";
 /** "checking" until the stored token has been validated against the server. */
-type AuthState = "checking" | "signed-out" | "signed-in";
+type AuthState = "checking" | "signed-in" | "signed-out";
+/**
+ * What a signed-out visitor is looking at. `null` is the public marketing page;
+ * anything else is the auth form opened on that tab.
+ */
+type AuthView = "login" | "register" | null;
 
 export default function App() {
   const [data, setData] = useState<DashboardData | null>(null);
@@ -28,6 +34,7 @@ export default function App() {
   const [authState, setAuthState] = useState<AuthState>("checking");
   const [user, setUser] = useState<AuthUser | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [authView, setAuthView] = useState<AuthView>(null);
 
   const signOut = useCallback((message?: string) => {
     clearStoredSession();
@@ -35,6 +42,15 @@ export default function App() {
     setData(null);
     setAuthState("signed-out");
     setNotice(message ?? null);
+    // An expired or rejected session should land straight on the sign-in form.
+    // A deliberate sign-out returns to the public landing page instead.
+    setAuthView(message ? "login" : null);
+  }, []);
+
+  /** Landing page CTAs open the auth form from the top of the viewport. */
+  const openAuth = useCallback((view: Exclude<AuthView, null>) => {
+    window.scrollTo({ top: 0 });
+    setAuthView(view);
   }, []);
 
   /** Pull the stored analysis for the signed-in user, if any. */
@@ -136,17 +152,48 @@ export default function App() {
 
   if (authState === "signed-out" || !user) {
     return (
-      <AuthScreen
-        notice={notice}
-        onAuthenticated={async (u) => {
-          setUser(u);
-          setNotice(null);
-          // Signing in on a returning account should land on their dashboard,
-          // not the upload screen.
-          await restoreDashboard();
-          setAuthState("signed-in");
-        }}
-      />
+      <AnimatePresence mode="wait">
+        {authView === null ? (
+          <motion.div
+            key="marketing"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.3 }}
+          >
+            <MarketingLanding
+              onGetStarted={() => openAuth("register")}
+              onSignIn={() => openAuth("login")}
+            />
+          </motion.div>
+        ) : (
+          <motion.div
+            key="auth"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.3 }}
+          >
+            <AuthScreen
+              notice={notice}
+              initialMode={authView}
+              onBack={() => {
+                setNotice(null);
+                setAuthView(null);
+              }}
+              onAuthenticated={async (u) => {
+                setUser(u);
+                setNotice(null);
+                setAuthView(null);
+                // Signing in on a returning account should land on their
+                // dashboard, not the upload screen.
+                await restoreDashboard();
+                setAuthState("signed-in");
+              }}
+            />
+          </motion.div>
+        )}
+      </AnimatePresence>
     );
   }
 
@@ -178,7 +225,11 @@ export default function App() {
             exit={{ opacity: 0 }}
             transition={{ duration: 0.4 }}
           >
-            <Dashboard data={data} capabilities={capabilities} />
+            <Dashboard
+              data={data}
+              capabilities={capabilities}
+              onDataChange={setData}
+            />
           </motion.div>
         )}
       </AnimatePresence>

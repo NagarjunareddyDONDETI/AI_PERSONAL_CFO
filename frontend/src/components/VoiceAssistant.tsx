@@ -37,27 +37,65 @@ const STATUS_LABEL: Record<Status, string> = {
   speaking: "Speaking…",
 };
 
-// Neon glowing microphone icon (matches the reference look).
+/**
+ * Neon glowing microphone.
+ *
+ * Drawn on a 64-unit grid rather than the usual 24 so the capsule can carry a
+ * grille and still land on crisp half-pixel edges at the 72px render size.
+ *
+ * The capsule is filled with the grille cut out of it in the backdrop colour —
+ * a thin-stroke outline icon loses those details entirely once the neon glow
+ * blooms over it, which is what made the previous version read as a smudge.
+ */
 function NeonMic({ active }: { active: boolean }) {
   const glow = active ? "#38bdf8" : "#22d3ee";
   return (
     <motion.svg
       width="72"
       height="72"
-      viewBox="0 0 24 24"
+      viewBox="0 0 64 64"
       fill="none"
+      aria-hidden="true"
+      focusable="false"
       stroke={glow}
-      strokeWidth="1.6"
+      strokeWidth="2.6"
       strokeLinecap="round"
       strokeLinejoin="round"
       animate={active ? { scale: [1, 1.06, 1] } : { scale: 1 }}
       transition={{ duration: 1.4, repeat: active ? Infinity : 0, ease: "easeInOut" }}
-      style={{ filter: `drop-shadow(0 0 10px ${glow}) drop-shadow(0 0 22px ${glow})` }}
+      // Tighter than before: a 4px core plus a soft 14px halo at 40% keeps the
+      // grille legible instead of drowning it in two full-strength shadows.
+      style={{ filter: `drop-shadow(0 0 4px ${glow}) drop-shadow(0 0 14px ${glow}66)` }}
     >
-      <rect x="9" y="2" width="6" height="12" rx="3" />
-      <path d="M5 10a7 7 0 0 0 14 0" />
-      <line x1="12" y1="17" x2="12" y2="21" />
-      <line x1="8" y1="21" x2="16" y2="21" />
+      <defs>
+        <linearGradient id="neonMicBody" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor={glow} stopOpacity="1" />
+          <stop offset="100%" stopColor={glow} stopOpacity="0.72" />
+        </linearGradient>
+      </defs>
+
+      {/* Capsule */}
+      <rect x="24" y="9" width="16" height="30" rx="8" fill="url(#neonMicBody)" stroke="none" />
+      {/* Grille, knocked out of the capsule in the overlay's backdrop colour */}
+      {[18, 23, 28, 33].map((y) => (
+        <line
+          key={y}
+          x1="27.5"
+          y1={y}
+          x2="36.5"
+          y2={y}
+          stroke="#0a0e1a"
+          strokeOpacity="0.55"
+          strokeWidth="2"
+        />
+      ))}
+
+      {/* Cradle — sweep-flag 0 arcs below the capsule, arms flanking it at
+          x=18/46 so they clear the 24–40 capsule width. */}
+      <path d="M18 31 A 14 14 0 0 0 46 31" />
+      {/* Stand and base */}
+      <line x1="32" y1="45" x2="32" y2="54" />
+      <line x1="22" y1="54" x2="42" y2="54" />
     </motion.svg>
   );
 }

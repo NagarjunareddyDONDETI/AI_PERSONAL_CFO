@@ -10,13 +10,25 @@ interface Props {
   onAuthenticated: (user: AuthUser) => void;
   /** Shown when the previous session expired rather than on a fresh visit. */
   notice?: string | null;
+  /**
+   * Which tab to open on. The landing page's "Get started" sends people to
+   * "register", while "Sign in" sends them to "login".
+   */
+  initialMode?: Mode;
+  /** When provided, renders a link back to the marketing landing page. */
+  onBack?: () => void;
 }
 
 const FIELD =
   "w-full rounded-xl border border-white/10 bg-black/25 px-4 py-2.5 text-sm text-slate-100 outline-none transition-colors placeholder:text-slate-500 focus:border-teal-accent/50 disabled:opacity-50";
 
-export default function AuthScreen({ onAuthenticated, notice }: Props) {
-  const [mode, setMode] = useState<Mode>("login");
+export default function AuthScreen({
+  onAuthenticated,
+  notice,
+  initialMode = "login",
+  onBack,
+}: Props) {
+  const [mode, setMode] = useState<Mode>(initialMode);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -76,6 +88,16 @@ export default function AuthScreen({ onAuthenticated, notice }: Props) {
         transition={{ duration: 0.4 }}
         className="glass-strong w-full max-w-md rounded-2xl p-7"
       >
+        {onBack && (
+          <button
+            type="button"
+            onClick={onBack}
+            className="mb-5 -ml-1 rounded-lg px-1 py-1 text-[12px] text-slate-400 transition-colors hover:text-teal-accent"
+          >
+            <span aria-hidden="true">←</span> Back to overview
+          </button>
+        )}
+
         <div className="mb-6 flex items-center gap-3">
           <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-gradient-to-br from-violet-accent to-teal-accent text-lg font-extrabold text-navy-900">
             ₹

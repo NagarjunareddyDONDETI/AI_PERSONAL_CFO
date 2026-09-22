@@ -401,6 +401,314 @@ export async function getDashboard(): Promise<DashboardData> {
   return authGet("/dashboard");
 }
 
+// ---------- Finzo hands-free voice ----------
+
+/** Structured failure from POST /voice/ask. */
+export interface VoiceAskError {
+  code:
+    | "EMPTY_AUDIO"
+    | "NO_SPEECH"
+    | "STT_FAILED"
+    | "STT_UNAVAILABLE"
+    | "NO_DATA"
+    | "LLM_FAILED"
+    | "INTERNAL";
+  message: string;
+}
+
+/**
+ * One complete spoken turn.
+ *
+ * Conversational failures arrive with HTTP 200 and `ok: false` so the voice loop
+ * can speak `speech` and keep listening instead of unwinding on a rejected fetch.
+ */
+export interface VoiceAskResult {
+  ok: boolean;
+  /** "answer" | "acknowledge" (bare wake word) | "stop" (barge-in phrase). */
+  action?: "answer" | "acknowledge" | "stop";
+  transcript: string;
+  /** The self-contained query after follow-up resolution, for display. */
+  resolved_query?: string;
+  intent?: string;
+  /** Written answer, markdown, for the transcript panel. */
+  response: string;
+  /** Speech-shaped answer, matching the audio. */
+  speech: string;
+  /** base64 mp3, or null when TTS was off or failed. */
+  audio_b64?: string | null;
+  tts_error?: string | null;
+  llm_used?: boolean;
+  confidence?: number;
+  low_confidence?: boolean;
+  /** "client_web_speech" when the fast path skipped server transcription. */
+  stt_provider?: string;
+  language?: string;
+  duration_ms?: number;
+  /** Time the server spent getting to a transcript. ~0 on the fast path. */
+  stt_ms?: number;
+  voice_session_id?: string;
+  conversation_id?: string;
+  context?: {
+    current_topic: string | null;
+    last_category: string | null;
+    last_metric: string | null;
+  };
+  error?: VoiceAskError;
+}
+
+export interface VoiceWakeConfig {
+  wake_word: string;
+  acknowledgements: string[];
+  timeout_options: number[];
+  default_timeout: number;
+}
+
+/**
+ * Send a spoken query and get the answer back in one round trip.
+ *
+ * Pass `transcript` when the browser's own recogniser already heard the query:
+ * the server then skips Whisper entirely, which is about a second off the round
+ * trip. `audio` is the fallback for when it did not, and at least one of the two
+ * must be supplied.
+ *
+ * `signal` exists so barge-in can abandon an in-flight request: without it, a
+ * cancelled answer would still arrive and start speaking.
+ */
+export async function voiceAsk(
+  audio: Blob | null,
+  opts: {
+    speak?: boolean;
+    timeoutSeconds?: number;
+    signal?: AbortSignal;
+    transcript?: string;
+  } = {}
+): Promise<VoiceAskResult> {
+  const form = new FormData();
+  if (audio) {
+    // The extension is only a container hint; the server whitelists it and never
+    // uses it as a path.
+    form.append("file", audio, "query.webm");
+  }
+  const transcript = opts.transcript?.trim();
+  if (transcript) form.append("client_transcript", transcript);
+  form.append("speak", String(opts.speak ?? true));
+  if (opts.timeoutSeconds !== undefined) {
+    form.append("timeout_seconds", String(opts.timeoutSeconds));
+  }
+  return handle(
+    await fetch(`${BASE}/voice/ask`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: form,
+      signal: opts.signal,
+    })
+  );
+}
+
+// ---------- Finzo streaming turn ----------
+
+export interface VoiceStreamMeta {
+  transcript: string;
+  resolved_query: string;
+  intent: string;
+  stt_provider?: string;
+  stt_ms?: number;
+  voice_session_id?: string;
+  conversation_id?: string;
+}
+
+export interface VoiceStreamDone {
+  response: string;
+  speech: string;
+  intent: string;
+  llm_used: boolean;
+  retrieved_context?: unknown[];
+  duration_ms?: number;
+  stt_ms?: number;
+}
+
+export interface VoiceStreamHandlers {
+  /** Transcript and intent, before any answer text. */
+  onMeta?: (meta: VoiceStreamMeta) => void;
+  /** Raw answer text, for the on-screen transcript. */
+  onDelta?: (text: string) => void;
+  /** One complete speech-ready sentence. Speak these in arrival order. */
+  onSpeak?: (text: string) => void;
+  /** Terminal: a stop command or a bare wake word. No answer follows. */
+  onAction?: (action: {
+    action: "stop" | "acknowledge";
+    transcript: string;
+    speech?: string;
+  }) => void;
+  onDone?: (done: VoiceStreamDone) => void;
+  onError?: (error: VoiceAskError) => void;
+}
+
+/**
+ * Stream a spoken turn over Server-Sent Events.
+ *
+ * Read with fetch rather than EventSource, which cannot send an Authorization
+ * header or use POST. Resolves once the stream closes; an aborted request
+ * resolves quietly rather than throwing, since barge-in is a normal outcome and
+ * not a failure.
+ */
+export async function voiceAskStream(
+  audio: Blob | null,
+  opts: {
+    transcript?: string;
+    timeoutSeconds?: number;
+    maxSpokenSentences?: number;
+    signal?: AbortSignal;
+  } & VoiceStreamHandlers = {}
+): Promise<void> {
+  const form = new FormData();
+  if (audio) form.append("file", audio, "query.webm");
+  const transcript = opts.transcript?.trim();
+  if (transcript) form.append("client_transcript", transcript);
+  if (opts.timeoutSeconds !== undefined) {
+    form.append("timeout_seconds", String(opts.timeoutSeconds));
+  }
+  if (opts.maxSpokenSentences !== undefined) {
+    form.append("max_spoken_sentences", String(opts.maxSpokenSentences));
+  }
+
+  const res = await fetch(`${BASE}/voice/ask/stream`, {
+    method: "POST",
+    headers: authHeaders(),
+    body: form,
+    signal: opts.signal,
+  });
+
+  // Validation, auth and rate limiting still arrive as real status codes,
+  // because they are decided before the stream opens.
+  if (!res.ok || !res.body) {
+    await handle(res); // throws ApiError, and clears the session on 401
+    return;
+  }
+
+  const dispatch = (event: string, raw: string) => {
+    let data: unknown;
+    try {
+      data = JSON.parse(raw);
+    } catch {
+      return; // ignore a malformed frame rather than killing the turn
+    }
+    switch (event) {
+      case "meta":
+        opts.onMeta?.(data as VoiceStreamMeta);
+        break;
+      case "delta":
+        opts.onDelta?.((data as { text: string }).text);
+        break;
+      case "speak":
+        opts.onSpeak?.((data as { text: string }).text);
+        break;
+      case "action":
+        opts.onAction?.(data as Parameters<
+          NonNullable<VoiceStreamHandlers["onAction"]>
+        >[0]);
+        break;
+      case "done":
+        opts.onDone?.(data as VoiceStreamDone);
+        break;
+      case "error":
+        opts.onError?.(data as VoiceAskError);
+        break;
+    }
+  };
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  // Frames are separated by a blank line and can be split across network chunks,
+  // so hold the remainder until the separator actually arrives.
+  let buffer = "";
+
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      let split: number;
+      while ((split = buffer.indexOf("\n\n")) !== -1) {
+        const frame = buffer.slice(0, split);
+        buffer = buffer.slice(split + 2);
+
+        let event = "message";
+        const dataLines: string[] = [];
+        for (const line of frame.split("\n")) {
+          if (line.startsWith("event:")) event = line.slice(6).trim();
+          else if (line.startsWith("data:")) dataLines.push(line.slice(5).trim());
+        }
+        if (dataLines.length) dispatch(event, dataLines.join("\n"));
+      }
+    }
+  } catch (e) {
+    // Barge-in aborts the reader mid-stream. That is the feature working.
+    if (!(e instanceof DOMException && e.name === "AbortError")) throw e;
+  } finally {
+    reader.releaseLock?.();
+  }
+}
+
+export async function getVoiceWakeConfig(): Promise<VoiceWakeConfig> {
+  return handle(await fetch(`${BASE}/voice/wake-config`));
+}
+
+export async function endVoiceSession(): Promise<{ ended: boolean }> {
+  return authSend("/voice/session", "DELETE");
+}
+
+// ---------- Statement history ----------
+// `/dashboard` returns only the active snapshot, which each upload replaces.
+// These read the append-only archive, so previous statements stay browsable.
+
+/** One archived statement, without its (large) analysis payload. */
+export interface StatementSummary {
+  id: number;
+  /** Null for statements archived before filenames were recorded. */
+  filename: string | null;
+  source_format: string | null;
+  txn_count: number;
+  /** Date of the earliest/latest transaction. Null when the file had none. */
+  period_start: string | null;
+  period_end: string | null;
+  total_income: number;
+  /** Positive magnitude, unlike the negative amounts on transactions. */
+  total_expenses: number;
+  score: number | null;
+  created_at: string;
+}
+
+/** A summary plus the full analysis, as returned by `GET /statements/:id`. */
+export interface ArchivedStatement extends StatementSummary {
+  payload: DashboardData;
+}
+
+export async function listStatements(): Promise<{
+  statements: StatementSummary[];
+}> {
+  return authGet("/statements");
+}
+
+export async function getStatement(id: number): Promise<ArchivedStatement> {
+  return authGet(`/statements/${id}`);
+}
+
+/**
+ * Make an archived statement the active one again and return its analysis.
+ * The whole dashboard reflects it afterwards, not just the history page.
+ */
+export async function restoreStatement(id: number): Promise<DashboardData> {
+  return authSend(`/statements/${id}/restore`, "POST");
+}
+
+export async function deleteStatement(
+  id: number
+): Promise<{ deleted: boolean }> {
+  return authSend(`/statements/${id}`, "DELETE");
+}
+
 export async function sendChat(query: string): Promise<ChatResponse> {
   return authSend("/chat", "POST", { query });
 }

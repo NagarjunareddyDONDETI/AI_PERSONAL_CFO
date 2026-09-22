@@ -95,6 +95,29 @@ def init_db() -> None:
                 payload TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
+            -- Append-only archive of every statement ever analysed.
+            --
+            -- `results` above holds only the *active* snapshot and is upserted on
+            -- each upload, so it cannot answer "what did last month look like?".
+            -- This table keeps the full payload per upload plus denormalised
+            -- summary columns, so the history list renders without having to
+            -- parse every archived payload.
+            CREATE TABLE IF NOT EXISTS statements (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT NOT NULL,
+                filename TEXT,
+                source_format TEXT,
+                payload TEXT NOT NULL,
+                txn_count INTEGER NOT NULL DEFAULT 0,
+                period_start TEXT,
+                period_end TEXT,
+                total_income REAL NOT NULL DEFAULT 0,
+                total_expenses REAL NOT NULL DEFAULT 0,
+                score INTEGER,
+                created_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_statements_user
+                ON statements(user_id, id);
             CREATE TABLE IF NOT EXISTS score_history (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id TEXT NOT NULL,
@@ -152,6 +175,7 @@ def init_db() -> None:
             """
         )
     _migrate()
+    _backfill_statements()
 
 
 def _migrate() -> None:
@@ -175,6 +199,53 @@ def _migrate() -> None:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
 
 
+def _backfill_statements() -> None:
+    """Seed the statement archive from the active snapshot, once per user.
+
+    Statement history was added after the fact, so accounts that had already
+    uploaded would otherwise open the History page to an empty list even though
+    their current analysis exists. This copies each user's `results` row in as
+    their first archive entry.
+
+    Idempotent: it only touches users with zero archived statements, so it is
+    safe on every boot and will not duplicate rows or clobber real history.
+    The original `results.updated_at` is preserved as `created_at` rather than
+    stamping the backfilled row with the time the migration ran.
+    """
+    with _write_lock, _connect() as conn:
+        rows = conn.execute(
+            "SELECT r.user_id, r.payload, r.updated_at FROM results r "
+            "WHERE NOT EXISTS ("
+            "    SELECT 1 FROM statements s WHERE s.user_id = r.user_id"
+            ")"
+        ).fetchall()
+
+        for row in rows:
+            try:
+                payload = json.loads(row["payload"])
+            except (ValueError, TypeError):
+                continue  # unreadable snapshot: skip rather than fail startup
+            m = _statement_metrics(payload)
+            conn.execute(
+                "INSERT INTO statements (user_id, filename, source_format, payload, "
+                "txn_count, period_start, period_end, total_income, total_expenses, "
+                "score, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    row["user_id"],
+                    None,  # the original filename was never recorded
+                    None,
+                    row["payload"],
+                    m["txn_count"],
+                    m["period_start"],
+                    m["period_end"],
+                    m["total_income"],
+                    m["total_expenses"],
+                    m["score"],
+                    row["updated_at"],
+                ),
+            )
+
+
 # ---------- Accounts ----------
 # Never select password_hash unless a credential check needs it.
 _PUBLIC_USER_COLS = "id, user_id, email, name, created_at, last_login_at"
@@ -183,6 +254,7 @@ _PUBLIC_USER_COLS = "id, user_id, email, name, created_at, last_login_at"
 _USER_DATA_TABLES = (
     "transactions",
     "results",
+    "statements",
     "score_history",
     "conversations",
     "simulations",
@@ -300,7 +372,13 @@ def save_transactions(user_id: str, categorized: list[dict]) -> None:
         )
 
 
-def save_result(user_id: str, payload: dict) -> None:
+def save_result(user_id: str, payload: dict, record_score: bool = True) -> None:
+    """Replace the active snapshot, optionally logging its score to the trend.
+
+    `record_score=False` is used when re-activating an *archived* statement: that
+    is the user navigating back to an old analysis, not a new measurement, and
+    appending its score again would put a phantom data point on the score trend.
+    """
     now = datetime.now(timezone.utc).isoformat()
     with _connect() as conn:
         conn.execute(
@@ -310,7 +388,7 @@ def save_result(user_id: str, payload: dict) -> None:
             (user_id, json.dumps(payload), now),
         )
         score = payload.get("health_score", {}).get("score")
-        if score is not None:
+        if record_score and score is not None:
             conn.execute(
                 "INSERT INTO score_history (user_id, score, created_at) VALUES (?, ?, ?)",
                 (user_id, int(score), now),
@@ -335,6 +413,129 @@ def get_transactions(user_id: str) -> list[dict]:
             (user_id,),
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+# ---------- Statement history (append-only archive) ----------
+#
+# `results` holds one upserted row per user — the active snapshot every dashboard
+# panel reads. The functions below keep an additional row per *upload*, so a past
+# statement can be listed, browsed and restored instead of being overwritten.
+
+# Upper bound on archived statements per user. Each row stores a full analysis
+# payload, so without a cap a heavy user's database would grow without limit.
+_MAX_STATEMENTS_PER_USER = 50
+
+
+def _statement_metrics(payload: dict) -> dict:
+    """Derive the summary columns shown in the history list from a payload.
+
+    Denormalised on write so listing history is a single cheap query rather than
+    a JSON parse of every archived statement.
+    """
+    txns = payload.get("transactions") or []
+    dates = sorted(t["date"] for t in txns if t.get("date"))
+    income = sum(t["amount"] for t in txns if (t.get("amount") or 0) > 0)
+    # Expenses are stored negative; report them as a positive magnitude.
+    expenses = -sum(t["amount"] for t in txns if (t.get("amount") or 0) < 0)
+    score = (payload.get("health_score") or {}).get("score")
+    return {
+        "txn_count": len(txns),
+        "period_start": dates[0] if dates else None,
+        "period_end": dates[-1] if dates else None,
+        "total_income": float(income),
+        "total_expenses": float(expenses),
+        "score": None if score is None else int(score),
+    }
+
+
+def save_statement(
+    user_id: str,
+    payload: dict,
+    filename: str | None = None,
+    source_format: str | None = None,
+    created_at: str | None = None,
+) -> int:
+    """Archive one analysed statement and return its new id.
+
+    `created_at` is injectable so the one-off backfill of pre-existing users can
+    preserve the original `results.updated_at` instead of stamping everything
+    with the time the migration happened to run.
+    """
+    now = created_at or datetime.now(timezone.utc).isoformat()
+    m = _statement_metrics(payload)
+    with _write_lock, _connect() as conn:
+        cur = conn.execute(
+            "INSERT INTO statements (user_id, filename, source_format, payload, "
+            "txn_count, period_start, period_end, total_income, total_expenses, "
+            "score, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                user_id,
+                filename,
+                source_format,
+                json.dumps(payload),
+                m["txn_count"],
+                m["period_start"],
+                m["period_end"],
+                m["total_income"],
+                m["total_expenses"],
+                m["score"],
+                now,
+            ),
+        )
+        new_id = int(cur.lastrowid)
+        # Drop the oldest rows beyond the cap. Subquery picks the ids to keep so
+        # the delete cannot touch another user's rows.
+        conn.execute(
+            "DELETE FROM statements WHERE user_id = ? AND id NOT IN "
+            "(SELECT id FROM statements WHERE user_id = ? ORDER BY id DESC LIMIT ?)",
+            (user_id, user_id, _MAX_STATEMENTS_PER_USER),
+        )
+    return new_id
+
+
+def list_statements(user_id: str) -> list[dict]:
+    """Return archived statement summaries, newest first.
+
+    Deliberately omits `payload`: the list view only needs the summary columns,
+    and shipping every full analysis would make this response enormous.
+    """
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT id, filename, source_format, txn_count, period_start, "
+            "period_end, total_income, total_expenses, score, created_at "
+            "FROM statements WHERE user_id = ? ORDER BY id DESC",
+            (user_id,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_statement(statement_id: int, user_id: str) -> dict | None:
+    """Return one archived statement including its full payload.
+
+    Scoped by user_id in the WHERE clause, so a guessed id belonging to someone
+    else reads as "not found" rather than leaking another account's finances.
+    """
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT id, filename, source_format, payload, txn_count, period_start, "
+            "period_end, total_income, total_expenses, score, created_at "
+            "FROM statements WHERE id = ? AND user_id = ?",
+            (statement_id, user_id),
+        ).fetchone()
+    if row is None:
+        return None
+    out = dict(row)
+    out["payload"] = json.loads(out["payload"])
+    return out
+
+
+def delete_statement(statement_id: int, user_id: str) -> bool:
+    with _connect() as conn:
+        cur = conn.execute(
+            "DELETE FROM statements WHERE id = ? AND user_id = ?",
+            (statement_id, user_id),
+        )
+        return cur.rowcount > 0
 
 
 # ---------- Conversation memory (Phase 1: AI Financial Copilot) ----------

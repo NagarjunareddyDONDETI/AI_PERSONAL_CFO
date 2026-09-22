@@ -10,9 +10,11 @@ import ChatPanel from "./ChatPanel";
 import DebatePanel from "./DebatePanel";
 import ErrorBoundary from "./ErrorBoundary";
 import ExplainabilityPanel from "./ExplainabilityPanel";
+import FinzoPanel from "./FinzoPanel";
 import ForecastChart from "./ForecastChart";
 import GoalPlannerPanel from "./GoalPlannerPanel";
 import HealthScorePanel from "./HealthScorePanel";
+import HistoryPanel from "./HistoryPanel";
 import MemoryPanel from "./MemoryPanel";
 import PageNav, { PAGE_IDS, PageId } from "./PageNav";
 import PageShell, { Row, Wide } from "./PageShell";
@@ -51,9 +53,16 @@ function StatCard({
 export default function Dashboard({
   data,
   capabilities,
+  onDataChange,
 }: {
   data: DashboardData;
   capabilities: Capabilities | null;
+  /**
+   * Replaces the analysis the whole dashboard is rendering. Used when a past
+   * statement is restored from History, so every panel updates, not just that
+   * page.
+   */
+  onDataChange?: (data: DashboardData) => void;
 }) {
   const hs = data.health_score;
   const ref = hs.reference_month;
@@ -126,6 +135,19 @@ export default function Dashboard({
           </PageShell>
         )}
 
+        {page === "history" && (
+          <PageShell
+            key="history"
+            eyebrow="History"
+            title="Previous statements"
+            description="Every statement you have analysed, kept after the next upload replaces it. Search old transactions, or bring a past analysis back as the active one."
+          >
+            <Row>
+              <HistoryPanel onRestored={onDataChange} delay={0.05} />
+            </Row>
+          </PageShell>
+        )}
+
         {page === "planning" && (
           <PageShell
             key="planning"
@@ -152,11 +174,19 @@ export default function Dashboard({
             title="Ask your CFO"
             description="Chat grounded in your own statement, or convene the specialist panel for a debated recommendation."
           >
+            {/* Finzo goes FIRST and full width. It was previously in the third
+                grid column beside the chat panel, which stacked it below a tall
+                panel on anything narrower than a large desktop — a hands-free
+                assistant that defaults to off and renders off-screen is one
+                nobody can turn on. Typing stays available directly below. */}
             <Row>
-              <ChatPanel capabilities={capabilities} delay={0.05} />
+              <FinzoPanel delay={0.05} />
             </Row>
             <Row>
-              <DebatePanel delay={0.1} />
+              <ChatPanel capabilities={capabilities} delay={0.1} />
+            </Row>
+            <Row>
+              <DebatePanel delay={0.15} />
             </Row>
           </PageShell>
         )}

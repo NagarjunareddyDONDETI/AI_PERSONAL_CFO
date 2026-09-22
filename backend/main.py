@@ -9,12 +9,25 @@ from the client — that is what made it possible to read or delete anyone's dat
 """
 from __future__ import annotations
 
+import base64
 import io
+import json
+import logging
 import os
 import secrets
+import time
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile, status
+from fastapi import (
+    BackgroundTasks,
+    FastAPI,
+    File,
+    Form,
+    HTTPException,
+    Request,
+    UploadFile,
+    status,
+)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
@@ -26,6 +39,7 @@ import auth  # noqa: E402
 from auth.deps import CurrentUser, CurrentUserId, is_valid_email, normalize_email  # noqa: E402
 from agents import llm_client  # noqa: E402
 from agents import twin  # noqa: E402
+from agents import copilot  # noqa: E402
 from agents.copilot import converse  # noqa: E402
 from agents.debate import list_agents, run_debate  # noqa: E402
 from agents import memory as memory_agent  # noqa: E402
@@ -43,6 +57,11 @@ from orchestrator.pipeline import run_pipeline, using_langgraph  # noqa: E402
 from orchestrator.trace import WORKFLOW_NODES, build_graph  # noqa: E402
 from rag import retriever  # noqa: E402
 from voice import voice_service  # noqa: E402
+from voice import conversation as voice_conversation  # noqa: E402
+from voice import speech as voice_speech  # noqa: E402
+from voice import wake as voice_wake  # noqa: E402
+
+logger = logging.getLogger("main")
 
 app = FastAPI(title="AI Personal CFO", version="1.0.0")
 
@@ -450,6 +469,11 @@ def _process_csv(content: str | bytes, user_id: str, filename: str | None = None
     def _persist() -> dict:
         database.save_transactions(user_id, state.get("categorized", []))
         database.save_result(user_id, result)
+        # Archive this upload as well, so it stays browsable after the next one
+        # replaces the active snapshot above. `result` has no "workflow" key at
+        # this point (it is attached further down), so what lands in the archive
+        # matches exactly what /dashboard returns.
+        database.save_statement(user_id, result, filename=filename, source_format=fmt)
         return result
 
     def _remember() -> int:
@@ -539,6 +563,61 @@ def _require_result(user_id: str) -> dict:
 @app.get("/dashboard")
 def dashboard(user_id: CurrentUserId) -> dict:
     return _require_result(user_id)
+
+
+# ---------- Statement history ----------
+#
+# `results` holds only the active snapshot and is overwritten on every upload.
+# These endpoints read the append-only `statements` archive instead, so previous
+# statements and their transactions remain reachable.
+
+
+def _require_statement(statement_id: int, user_id: str) -> dict:
+    """Load an archived statement or 404.
+
+    The lookup is scoped by user_id, so a guessed id belonging to another account
+    is indistinguishable from one that does not exist.
+    """
+    record = database.get_statement(statement_id, user_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Statement not found.")
+    return record
+
+
+@app.get("/statements")
+def statements_index(user_id: CurrentUserId) -> dict:
+    """Summaries of every archived statement, newest first (no payloads)."""
+    return {"statements": database.list_statements(user_id)}
+
+
+@app.get("/statements/{statement_id}")
+def statement_detail(statement_id: int, user_id: CurrentUserId) -> dict:
+    """One archived statement, including its full analysis payload."""
+    return _require_statement(statement_id, user_id)
+
+
+@app.post("/statements/{statement_id}/restore")
+def statement_restore(statement_id: int, user_id: CurrentUserId) -> dict:
+    """Make an archived statement the active snapshot again.
+
+    Every other panel reads `results` / `transactions`, so this writes the
+    archived payload back into both rather than introducing a second code path
+    that each panel would have to learn about.
+
+    No new archive row is created: re-activating an old statement is navigation,
+    not a new upload.
+    """
+    payload = _require_statement(statement_id, user_id)["payload"]
+    database.save_transactions(user_id, payload.get("transactions", []))
+    database.save_result(user_id, payload, record_score=False)
+    return payload
+
+
+@app.delete("/statements/{statement_id}")
+def statement_delete(statement_id: int, user_id: CurrentUserId) -> dict:
+    if not database.delete_statement(statement_id, user_id):
+        raise HTTPException(status_code=404, detail="Statement not found.")
+    return {"deleted": True}
 
 
 @app.get("/forecast")
@@ -894,18 +973,47 @@ def whatif(req: WhatIfRequest, user_id: CurrentUserId) -> dict:
 # ---------- Phase 6: voice ----------
 # Transcription and synthesis call paid third-party APIs, so both require a
 # session; leaving them open is a way to spend someone else's credits.
+# Audio arrives as opus/webm at roughly 2 KB per second, so a legitimate spoken
+# query is tens of kilobytes. The cap exists to stop an authenticated client from
+# posting an arbitrarily large body into a paid STT API.
+_MAX_AUDIO_BYTES = 8 * 1024 * 1024
+
+# Whitelist of container suffixes. The uploaded filename is NEVER used to build a
+# path -- it only picks an extension for the temp file the STT layer writes, so an
+# unexpected value falls back to .webm rather than being trusted.
+_ALLOWED_AUDIO_SUFFIXES = frozenset(
+    {".webm", ".ogg", ".oga", ".opus", ".wav", ".mp3", ".m4a", ".mp4", ".flac"}
+)
+
+# Cap on a client-supplied transcript (the low-latency path in /voice/ask). A
+# spoken question is a sentence or two; this only stops an authenticated client
+# from pushing a large body straight into the LLM prompt.
+_MAX_CLIENT_TRANSCRIPT_CHARS = 1000
+
+
+def _safe_audio_suffix(filename: str | None) -> str:
+    suffix = os.path.splitext(filename or "")[1].lower()
+    return suffix if suffix in _ALLOWED_AUDIO_SUFFIXES else ".webm"
+
+
 @app.post("/voice/transcribe")
 async def voice_transcribe(_: CurrentUserId, file: UploadFile = File(...)) -> dict:
     raw = await file.read()
-    suffix = os.path.splitext(file.filename or "")[1] or ".webm"
-    out = voice_service.transcribe(raw, suffix=suffix)
+    if len(raw) > _MAX_AUDIO_BYTES:
+        raise HTTPException(status_code=413, detail="Audio clip is too large.")
+    out = voice_service.transcribe(raw, suffix=_safe_audio_suffix(file.filename))
     if not out["available"]:
         raise HTTPException(status_code=503, detail=out["error"])
-    # Log the detected speech so it's visible in the server terminal.
+    # Transcripts are user speech, so they are logged at debug level only; info
+    # records the outcome without the content.
     if out.get("error"):
-        print(f"[voice] transcription error: {out['error']}", flush=True)
+        logger.warning("voice.transcribe failed: %s", out["error"])
     else:
-        print(f"[voice] detected speech: {out.get('text', '')!r}", flush=True)
+        logger.info(
+            "voice.transcribe ok chars=%d provider=%s",
+            len(out.get("text") or ""), out.get("provider"),
+        )
+        logger.debug("voice.transcribe text=%r", out.get("text", ""))
     return out
 
 
@@ -931,6 +1039,543 @@ def voice_config() -> dict:
 def voice_metrics(_: CurrentUserId) -> dict:
     """Observability: STT/TTS latency, fallbacks, provider usage, errors."""
     return voice_service.metrics()
+
+
+# ---------- Finzo: hands-free voice turn ----------
+#
+# One round trip for a complete spoken exchange: audio in, spoken answer out.
+# Collapsing transcribe + chat + speak into a single call removes two network
+# round trips from the path between the user finishing their sentence and hearing
+# a reply, which is the latency that decides whether this feels conversational.
+#
+# The reasoning is NOT reimplemented here. This calls the same
+# retriever.retrieve + memory_agent.recall_context + converse() chain that
+# POST /chat uses, so a question asked aloud and the same question typed produce
+# the same financial answer.
+
+
+# Every voice turn spends money at a third-party STT API and (usually) an LLM, so
+# it is rate limited per account. 40/minute is far above conversational pace
+# (a spoken exchange takes seconds) but bounds a runaway client or a stuck
+# retry loop. Keyed on user_id, not IP, because the endpoint already requires a
+# session and shared NAT would otherwise punish co-located users.
+voice_ask_limiter = auth.RateLimiter(max_attempts=40, window_seconds=60)
+
+
+def _voice_failure(code: str, session=None, **extra) -> dict:
+    """Structured, speakable failure. Returned with HTTP 200 on purpose.
+
+    A 4xx/5xx would make the browser's fetch reject, and the frontend would have
+    to special-case every code to keep the conversation alive. Returning a normal
+    body with ok=false lets the voice loop speak the message and carry on
+    listening. Genuine protocol errors (auth, oversized body) still use HTTP
+    codes.
+    """
+    payload = {
+        "ok": False,
+        "error": {"code": code, "message": voice_speech.error_speech(code)},
+        "speech": voice_speech.error_speech(code),
+        "transcript": "",
+        "response": "",
+        **extra,
+    }
+    if session is not None:
+        payload["voice_session_id"] = session.voice_session_id
+        payload["conversation_id"] = session.conversation_id
+    return payload
+
+
+def _summarize_conversation_safely(user_id: str, history: list[dict]) -> None:
+    """Background memory write. Runs after the response, so it must swallow its
+    own errors: there is no client left to report them to."""
+    try:
+        memory_agent.summarize_conversation(user_id, history)
+    except Exception:  # noqa: BLE001
+        logger.exception("voice.ask background memory summarise failed")
+
+
+@app.post("/voice/ask")
+async def voice_ask(
+    user_id: CurrentUserId,
+    background: BackgroundTasks,
+    file: UploadFile | None = File(None),
+    speak: bool = Form(True),
+    timeout_seconds: int = Form(voice_conversation.DEFAULT_TIMEOUT_SECONDS),
+    client_transcript: str = Form(""),
+) -> dict:
+    """Transcribe a spoken query, answer it through the existing CFO pipeline,
+    and return both the written answer and speech-ready audio.
+
+    ``client_transcript`` is the fast path. The browser's SpeechRecognition engine
+    has already transcribed the query while the user was speaking, at no extra
+    latency, so re-decoding the same audio through Whisper costs about a second
+    and buys nothing. When the client sends its transcript we skip STT entirely;
+    when it cannot (recogniser unsupported, died mid-utterance, or produced
+    nothing) it uploads the audio instead and this falls back to the server
+    pipeline. Exactly one of the two must be present.
+    """
+    started = time.monotonic()
+
+    retry_after = voice_ask_limiter.check(user_id)
+    if retry_after:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many voice requests. Please wait a moment.",
+            headers={"Retry-After": str(retry_after)},
+        )
+    voice_ask_limiter.record_failure(user_id)  # counts every call, not just failures
+
+    client_text = (client_transcript or "").strip()
+    # Bound the field: it reaches the LLM prompt, and an unbounded form value is
+    # a cheap way to inflate token spend.
+    if len(client_text) > _MAX_CLIENT_TRANSCRIPT_CHARS:
+        client_text = client_text[:_MAX_CLIENT_TRANSCRIPT_CHARS]
+
+    raw = b""
+    if file is not None:
+        raw = await file.read()
+        if len(raw) > _MAX_AUDIO_BYTES:
+            raise HTTPException(status_code=413, detail="Audio clip is too large.")
+    if not raw and not client_text:
+        return _voice_failure("EMPTY_AUDIO")
+
+    if timeout_seconds not in voice_conversation.ALLOWED_TIMEOUTS:
+        timeout_seconds = voice_conversation.DEFAULT_TIMEOUT_SECONDS
+    session = voice_conversation.registry.get_or_create(
+        user_id, timeout_seconds=timeout_seconds
+    )
+
+    # ---- speech to text ---------------------------------------------------- #
+    if client_text:
+        # Fast path: trust the on-device recogniser. Confidence is reported as
+        # None rather than a made-up number, since the Web Speech API does not
+        # give a comparable score.
+        stt = {
+            "text": client_text,
+            "available": True,
+            "error": None,
+            "provider": "client_web_speech",
+            "confidence": None,
+            "language": None,
+            "latency_ms": 0,
+            "low_confidence": False,
+        }
+    else:
+        stt = voice_service.transcribe(
+            raw, suffix=_safe_audio_suffix(file.filename if file else None)
+        )
+        if not stt.get("available"):
+            return _voice_failure("STT_UNAVAILABLE", session)
+        if stt.get("error"):
+            logger.warning("voice.ask stt error: %s", stt["error"])
+            return _voice_failure("STT_FAILED", session)
+
+    transcript = (stt.get("text") or "").strip()
+    if not transcript:
+        return _voice_failure("NO_SPEECH", session)
+    stt_ms = int((time.monotonic() - started) * 1000)
+
+    # ---- barge-in ---------------------------------------------------------- #
+    # "Stop" is an instruction to the client, not a question for the LLM.
+    if voice_wake.is_stop_command(transcript):
+        session.touch()
+        logger.info("voice.ask stop command session=%s", session.voice_session_id)
+        return {
+            "ok": True,
+            "action": "stop",
+            "transcript": transcript,
+            "resolved_query": "",
+            "intent": "stop",
+            "response": "",
+            "speech": "",
+            "audio_b64": None,
+            "llm_used": False,
+            "voice_session_id": session.voice_session_id,
+            "conversation_id": session.conversation_id,
+        }
+
+    # A wake word spoken in the same breath as the question is stripped so the
+    # LLM never sees "finzo how much did i spend".
+    query = voice_wake.strip_wake_word(transcript)
+    if not query:
+        # Bare "Finzo" with no question: acknowledge and keep listening.
+        session.touch()
+        ack = voice_speech.acknowledgement()
+        audio_b64 = None
+        if speak:
+            audio, _err = voice_service.synthesize(ack)
+            audio_b64 = base64.b64encode(audio).decode() if audio else None
+        return {
+            "ok": True,
+            "action": "acknowledge",
+            "transcript": transcript,
+            "resolved_query": "",
+            "intent": "wake",
+            "response": ack,
+            "speech": ack,
+            "audio_b64": audio_b64,
+            "llm_used": False,
+            "voice_session_id": session.voice_session_id,
+            "conversation_id": session.conversation_id,
+        }
+
+    # ---- follow-up resolution (deterministic, before the LLM) -------------- #
+    resolved_query = session.resolve(query)
+
+    # ---- the existing CFO pipeline, unchanged ------------------------------ #
+    result = database.get_result(user_id)
+    if result is None:
+        return _voice_failure("NO_DATA", session, transcript=transcript)
+
+    try:
+        history = database.get_conversation(user_id, limit=20)
+        rag = retriever.retrieve(resolved_query, user_id)
+        memory_context = memory_agent.recall_context(user_id)
+        answer = converse(
+            resolved_query, result, rag, history, memory_context=memory_context
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("voice.ask pipeline failed session=%s", session.voice_session_id)
+        session.note_turn(
+            text=transcript, resolved_text=resolved_query, intent="unknown",
+            response="", duration_ms=int((time.monotonic() - started) * 1000),
+            status="error",
+        )
+        return _voice_failure("LLM_FAILED", session, transcript=transcript)
+
+    written = answer.get("response") or ""
+    intent = answer.get("intent") or "spending"
+
+    # Voice answers stay short; the written form still goes to the transcript
+    # panel, so nothing is lost.
+    speech_text = voice_speech.for_speech(written, max_sentences=4)
+
+    # Persist through the same history the text copilot uses, so switching
+    # between voice and typing keeps one continuous conversation.
+    database.save_message(user_id, "user", resolved_query)
+    database.save_message(
+        user_id, "assistant", written,
+        intent=intent, llm_used=answer.get("llm_used"),
+    )
+
+    # Memory summarisation embeds text into Chroma, which costs a few hundred
+    # milliseconds. Nothing in this response depends on it, and the next turn
+    # reads memory from the database rather than from this call, so it runs after
+    # the response is sent instead of making the user wait for it.
+    background.add_task(
+        _summarize_conversation_safely,
+        user_id,
+        history + [{"role": "user", "content": resolved_query}],
+    )
+
+    duration_ms = int((time.monotonic() - started) * 1000)
+    session.note_turn(
+        text=transcript, resolved_text=resolved_query, intent=intent,
+        response=written, duration_ms=duration_ms,
+    )
+
+    # ---- text to speech ---------------------------------------------------- #
+    audio_b64: str | None = None
+    tts_error: str | None = None
+    if speak and speech_text:
+        audio, tts_error = voice_service.synthesize(speech_text)
+        if audio:
+            audio_b64 = base64.b64encode(audio).decode()
+        else:
+            # A TTS failure must not lose the answer: the client shows the text
+            # and the conversation continues.
+            logger.warning("voice.ask tts failed: %s", tts_error)
+
+    logger.info(
+        "voice.ask ok session=%s intent=%s llm=%s stt=%s stt_ms=%d ms=%d spoken=%s",
+        session.voice_session_id, intent, answer.get("llm_used"),
+        stt.get("provider"), stt_ms, duration_ms, audio_b64 is not None,
+    )
+
+    return {
+        "ok": True,
+        "action": "answer",
+        "transcript": transcript,
+        "resolved_query": resolved_query,
+        "intent": intent,
+        "response": written,
+        "speech": speech_text,
+        "audio_b64": audio_b64,
+        "tts_error": tts_error,
+        "llm_used": bool(answer.get("llm_used")),
+        "retrieved_context": answer.get("retrieved_context", []),
+        "confidence": stt.get("confidence"),
+        "low_confidence": stt.get("low_confidence"),
+        "stt_provider": stt.get("provider"),
+        "language": stt.get("language"),
+        "duration_ms": duration_ms,
+        "stt_ms": stt_ms,
+        "voice_session_id": session.voice_session_id,
+        "conversation_id": session.conversation_id,
+        "context": {
+            "current_topic": session.current_topic,
+            "last_category": session.last_category,
+            "last_metric": session.last_metric,
+        },
+    }
+
+
+# ---------- Finzo: streaming voice turn ----------
+#
+# Same pipeline as POST /voice/ask, delivered as Server-Sent Events so the client
+# can start speaking the first sentence while the rest of the answer is still
+# being generated. On a two-second answer that is most of the wait removed: the
+# user hears "You spent 6,840 rupees on food this month." while the explanation
+# behind it is still arriving.
+#
+# Why SSE and not a WebSocket: the traffic is one request in, many chunks out,
+# with no client-to-server messages mid-turn. SSE covers that over plain HTTP,
+# inherits the existing bearer-token auth, and needs no connection lifecycle to
+# manage. A WebSocket would add both without being used.
+#
+# Why POST rather than EventSource: EventSource cannot set an Authorization
+# header. The client reads the stream from fetch() instead.
+
+
+def _sse(event: str, payload: dict) -> str:
+    """Format one Server-Sent Event.
+
+    json.dumps matters here: an answer containing a newline would otherwise be
+    read as a frame boundary and truncate the event.
+    """
+    return f"event: {event}\ndata: {json.dumps(payload, default=str)}\n\n"
+
+
+@app.post("/voice/ask/stream")
+async def voice_ask_stream(
+    user_id: CurrentUserId,
+    background: BackgroundTasks,
+    file: UploadFile | None = File(None),
+    timeout_seconds: int = Form(voice_conversation.DEFAULT_TIMEOUT_SECONDS),
+    client_transcript: str = Form(""),
+    max_spoken_sentences: int = Form(4),
+) -> StreamingResponse:
+    """Stream a spoken turn: transcript, then answer text, then speech chunks.
+
+    Event sequence:
+      ``meta``   once   - transcript, resolved query, intent, session ids
+      ``action`` once   - "stop" or "acknowledge"; terminal, no answer follows
+      ``delta``  many   - raw answer text for the on-screen transcript
+      ``speak``  many   - one complete speech-ready sentence, in order
+      ``done``   once   - full answer plus timings
+      ``error``  once   - terminal; carries a speakable message
+
+    Never emits TTS audio: the client speaks each ``speak`` chunk with the local
+    voice as it arrives. Waiting on server-side synthesis per sentence would
+    reintroduce the latency this endpoint exists to remove.
+    """
+    started = time.monotonic()
+
+    # Validation and rate limiting happen before the response starts, so these
+    # still surface as real HTTP status codes. Once the stream is open the headers
+    # are already sent and every failure has to become an `error` event instead.
+    retry_after = voice_ask_limiter.check(user_id)
+    if retry_after:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many voice requests. Please wait a moment.",
+            headers={"Retry-After": str(retry_after)},
+        )
+    voice_ask_limiter.record_failure(user_id)
+
+    client_text = (client_transcript or "").strip()[:_MAX_CLIENT_TRANSCRIPT_CHARS]
+    raw = b""
+    if file is not None:
+        raw = await file.read()
+        if len(raw) > _MAX_AUDIO_BYTES:
+            raise HTTPException(status_code=413, detail="Audio clip is too large.")
+
+    if timeout_seconds not in voice_conversation.ALLOWED_TIMEOUTS:
+        timeout_seconds = voice_conversation.DEFAULT_TIMEOUT_SECONDS
+    filename = file.filename if file else None
+
+    async def events():
+        def fail(code: str) -> str:
+            return _sse("error", {"code": code, "message": voice_speech.error_speech(code)})
+
+        if not raw and not client_text:
+            yield fail("EMPTY_AUDIO")
+            return
+
+        session = voice_conversation.registry.get_or_create(
+            user_id, timeout_seconds=timeout_seconds
+        )
+
+        # ---- transcript ---------------------------------------------------- #
+        if client_text:
+            transcript, stt_provider = client_text, "client_web_speech"
+        else:
+            stt = voice_service.transcribe(raw, suffix=_safe_audio_suffix(filename))
+            if not stt.get("available"):
+                yield fail("STT_UNAVAILABLE")
+                return
+            if stt.get("error"):
+                logger.warning("voice.ask.stream stt error: %s", stt["error"])
+                yield fail("STT_FAILED")
+                return
+            transcript = (stt.get("text") or "").strip()
+            stt_provider = stt.get("provider") or "unknown"
+        if not transcript:
+            yield fail("NO_SPEECH")
+            return
+        stt_ms = int((time.monotonic() - started) * 1000)
+
+        # ---- barge-in and bare wake word ----------------------------------- #
+        if voice_wake.is_stop_command(transcript):
+            session.touch()
+            yield _sse("action", {"action": "stop", "transcript": transcript})
+            return
+
+        query = voice_wake.strip_wake_word(transcript)
+        if not query:
+            session.touch()
+            ack = voice_speech.acknowledgement()
+            yield _sse(
+                "action",
+                {"action": "acknowledge", "transcript": transcript, "speech": ack},
+            )
+            return
+
+        resolved_query = session.resolve(query)
+
+        result = database.get_result(user_id)
+        if result is None:
+            yield fail("NO_DATA")
+            return
+
+        # ---- prompt assembly (same path as the text copilot) --------------- #
+        try:
+            history = database.get_conversation(user_id, limit=20)
+            rag = retriever.retrieve(resolved_query, user_id)
+            memory_context = memory_agent.recall_context(user_id)
+            turn = copilot.prepare_turn(
+                resolved_query, result, rag, history, memory_context=memory_context
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception("voice.ask.stream prep failed")
+            yield fail("LLM_FAILED")
+            return
+
+        yield _sse(
+            "meta",
+            {
+                "transcript": transcript,
+                "resolved_query": resolved_query,
+                "intent": turn["intent"],
+                "stt_provider": stt_provider,
+                "stt_ms": stt_ms,
+                "voice_session_id": session.voice_session_id,
+                "conversation_id": session.conversation_id,
+            },
+        )
+
+        # ---- stream the answer --------------------------------------------- #
+        streamer = voice_speech.SentenceStreamer(max_sentences=max_spoken_sentences)
+        written = ""
+        llm_used = False
+        try:
+            async for chunk in llm_router.stream(
+                [Message(role="user", content=turn["prompt"])]
+            ):
+                if not chunk:
+                    continue
+                written += chunk
+                llm_used = True
+                yield _sse("delta", {"text": chunk})
+                for sentence in streamer.feed(chunk):
+                    yield _sse("speak", {"text": sentence})
+        except Exception as exc:  # noqa: BLE001
+            # Mid-stream failure. If some of the answer already went out, keep it
+            # and close cleanly; the user heard a partial but correct answer.
+            logger.warning("voice.ask.stream llm failed: %s", exc)
+            if not written.strip():
+                # Nothing was said yet, so fall back to the deterministic answer
+                # rather than leaving the user with silence.
+                written, llm_used = turn["fallback"], False
+                yield _sse("delta", {"text": written})
+                for sentence in streamer.feed(written):
+                    yield _sse("speak", {"text": sentence})
+
+        for sentence in streamer.flush():
+            yield _sse("speak", {"text": sentence})
+
+        # ---- persist ------------------------------------------------------- #
+        written = written.strip()
+        duration_ms = int((time.monotonic() - started) * 1000)
+        try:
+            database.save_message(user_id, "user", resolved_query)
+            database.save_message(
+                user_id, "assistant", written, intent=turn["intent"], llm_used=llm_used
+            )
+            session.note_turn(
+                text=transcript, resolved_text=resolved_query, intent=turn["intent"],
+                response=written, duration_ms=duration_ms,
+            )
+            background.add_task(
+                _summarize_conversation_safely,
+                user_id,
+                history + [{"role": "user", "content": resolved_query}],
+            )
+        except Exception:  # noqa: BLE001
+            # The answer was already delivered and spoken; a persistence problem
+            # must not turn a successful turn into an error.
+            logger.exception("voice.ask.stream persist failed")
+
+        logger.info(
+            "voice.ask.stream ok session=%s intent=%s stt=%s stt_ms=%d ms=%d",
+            session.voice_session_id, turn["intent"], stt_provider, stt_ms, duration_ms,
+        )
+        yield _sse(
+            "done",
+            {
+                "response": written,
+                "speech": voice_speech.for_speech(
+                    written, max_sentences=max_spoken_sentences
+                ),
+                "intent": turn["intent"],
+                "llm_used": llm_used,
+                "retrieved_context": turn["sources"],
+                "duration_ms": duration_ms,
+                "stt_ms": stt_ms,
+            },
+        )
+
+    return StreamingResponse(
+        events(),
+        media_type="text/event-stream",
+        # Without this an nginx/Render proxy will buffer the whole stream and
+        # deliver it as one blob, silently undoing the streaming.
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@app.get("/voice/session")
+def voice_session(user_id: CurrentUserId) -> dict:
+    """Current hands-free session state (no audio is ever stored)."""
+    session = voice_conversation.registry.peek(user_id)
+    return {"session": session.snapshot() if session else None}
+
+
+@app.delete("/voice/session")
+def voice_session_end(user_id: CurrentUserId) -> dict:
+    """End conversation mode and forget dialogue context."""
+    return {"ended": voice_conversation.registry.end(user_id)}
+
+
+@app.get("/voice/wake-config")
+def voice_wake_config() -> dict:
+    """Wake-word settings the frontend needs to match server-side behaviour."""
+    return {
+        "wake_word": voice_wake.WAKE_WORD,
+        "acknowledgements": list(voice_speech.ACKNOWLEDGEMENTS),
+        "timeout_options": list(voice_conversation.ALLOWED_TIMEOUTS),
+        "default_timeout": voice_conversation.DEFAULT_TIMEOUT_SECONDS,
+    }
 
 
 if __name__ == "__main__":

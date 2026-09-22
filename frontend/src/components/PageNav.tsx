@@ -3,6 +3,7 @@ import { motion } from "framer-motion";
 export const PAGES = [
   { id: "overview", label: "Overview", icon: "◍" },
   { id: "insights", label: "Insights", icon: "◆" },
+  { id: "history", label: "History", icon: "◷" },
   { id: "planning", label: "Planning", icon: "◈" },
   { id: "advisor", label: "Advisor", icon: "◉" },
   { id: "memory", label: "Memory", icon: "◎" },

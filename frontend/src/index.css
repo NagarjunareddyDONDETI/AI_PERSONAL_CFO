@@ -64,3 +64,97 @@ body.reduce-motion * {
   animation: none !important;
   transition: none !important;
 }
+
+/* ---------------------------------------------------------------------------
+   Marketing landing page helpers
+   --------------------------------------------------------------------------- */
+
+/* Horizontal card rails scroll by arrow button / swipe, so the native bar is
+   noise. Keyboard scrolling still works because the element stays focusable. */
+.no-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+/* Soft-fades both ends of a continuously scrolling track so the ticker appears
+   to emerge from and vanish into the page edges rather than popping.
+   Intended for the marquee — not the card rails, where a permanent fade on the
+   first card would read as a rendering bug when the rail is already at its start. */
+.rail-mask {
+  -webkit-mask-image: linear-gradient(
+    to right,
+    transparent 0,
+    #000 4rem,
+    #000 calc(100% - 4rem),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to right,
+    transparent 0,
+    #000 4rem,
+    #000 calc(100% - 4rem),
+    transparent 100%
+  );
+}
+@media (max-width: 768px) {
+  /* Narrow viewports cannot spare 4rem of fade on each side. */
+  .rail-mask {
+    -webkit-mask-image: linear-gradient(
+      to right,
+      #000 0,
+      #000 calc(100% - 2rem),
+      transparent 100%
+    );
+    mask-image: linear-gradient(
+      to right,
+      #000 0,
+      #000 calc(100% - 2rem),
+      transparent 100%
+    );
+  }
+}
+
+/* Darkens the bottom of the hero so headline text keeps contrast over the
+   animated 3D scene, and blends the hero into the next section. */
+.hero-scrim {
+  background: linear-gradient(
+    to bottom,
+    rgba(6, 9, 18, 0.72) 0%,
+    rgba(6, 9, 18, 0.35) 35%,
+    rgba(10, 14, 26, 0.75) 78%,
+    #0a0e1a 100%
+  );
+}
+
+/* Faint engineering-blueprint grid, echoes the "spreadsheet" idea. */
+.blueprint-grid {
+  background-image:
+    linear-gradient(to right, rgba(148, 163, 184, 0.06) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(148, 163, 184, 0.06) 1px, transparent 1px);
+  background-size: 64px 64px;
+}
+
+/* Animated gradient wordmark/headline fill. Pairs with animate-gradientPan. */
+.gradient-text {
+  background-image: linear-gradient(
+    100deg,
+    #2dd4bf 0%,
+    #e5e9f0 42%,
+    #a78bfa 72%,
+    #2dd4bf 100%
+  );
+  background-size: 220% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* Consistent, visible keyboard focus on the dark marketing surfaces. */
+.focus-ring:focus-visible {
+  outline: 2px solid #2dd4bf;
+  outline-offset: 3px;
+  border-radius: 0.75rem;
+}
