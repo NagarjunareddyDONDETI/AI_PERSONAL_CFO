@@ -100,7 +100,14 @@ def _startup() -> None:
 
 
 # ---------- Phase 0 ----------
+@app.get("/")
+@app.head("/")
+def root() -> dict:
+    return {"status": "ok", "app": "AI Personal CFO"}
+
+
 @app.get("/health")
+@app.head("/health")
 def health() -> dict:
     return {"status": "ok"}
 
