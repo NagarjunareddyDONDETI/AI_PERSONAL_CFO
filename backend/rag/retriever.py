@@ -60,7 +60,6 @@ def _init() -> bool:
             _client = chromadb.PersistentClient(path=_PERSIST_DIR)
             _embed_fn = _make_embed_fn(embedding_functions)
             _available = True
-            _seed_knowledge()
         except Exception:  # noqa: BLE001
             logger.warning("RAG init failed; retrieval disabled.", exc_info=True)
             _available = False
@@ -139,101 +138,30 @@ def _bump_user(user_id: str) -> None:
             _query_cache.pop(k, None)
 
 
+_seed_lock = threading.Lock()
+_seeded = False
+
+
 def _seed_knowledge() -> None:
-    coll = _get_collection("financial_knowledge")
-    if coll.count() >= len(KNOWLEDGE_DOCS):
+    global _seeded
+    if _seeded:
         return
-    ids = [f"kn_{i}" for i in range(len(KNOWLEDGE_DOCS))]
-    metadatas = [{"kind": "knowledge"} for _ in KNOWLEDGE_DOCS]
-    coll.upsert(documents=KNOWLEDGE_DOCS, ids=ids, metadatas=metadatas)
-
-
-def index_user_memory(user_id: str, state: dict) -> None:
-    """Auto-generate and embed per-user documents after processing."""
-    if not _init():
-        return
-    coll = _get_collection("user_memory")
-    docs: list[str] = []
-    ids: list[str] = []
-    metadatas: list[dict] = []
-
-    def add(doc: str, doc_id: str, kind: str) -> None:
-        docs.append(doc)
-        ids.append(doc_id)
-        metadatas.append({"user_id": user_id, "kind": kind})
-
-    summary = state.get("monthly_summary", {})
-    for month in summary.get("months", []):
-        cats = summary["by_month_category"].get(month, {})
-        parts = [f"{c}: Rs.{abs(v):,.0f}" for c, v in cats.items()]
-        add(
-            f"[{user_id}] In {month}, spending by category was: " + "; ".join(parts),
-            f"{user_id}_summary_{month}",
-            "summary",
-        )
-
-    for i, anom in enumerate(state.get("anomalies", [])):
-        add(
-            f"[{user_id}] Anomaly: {anom.get('message', '')}",
-            f"{user_id}_anomaly_{i}",
-            "anomaly",
-        )
-
-    hs = state.get("health_score", {})
-    if hs:
-        add(
-            f"[{user_id}] Financial health score is {hs.get('score')} "
-            f"({hs.get('rating')}), savings rate {hs.get('savings_rate', 0):.0%}.",
-            f"{user_id}_score",
-            "score",
-        )
-
-    if docs:
-        coll.upsert(documents=docs, ids=ids, metadatas=metadatas)
-        _bump_user(user_id)
-
-
-def index_memory_items(user_id: str, items: list[dict]) -> None:
-    """Embed long-term memory items for semantic recall (Phase 5).
-
-    Each item: {"id": str, "text": str, "kind": str}. No-op if RAG unavailable.
-    """
-    if not _init() or not items:
-        return
-    coll = _get_collection("user_memory")
-    docs, ids, metadatas = [], [], []
-    for it in items:
-        text = (it.get("text") or "").strip()
-        if not text:
-            continue
-        docs.append(f"[{user_id}] {text}")
-        ids.append(f"{user_id}_mem_{it.get('id')}")
-        metadatas.append({"user_id": user_id, "kind": it.get("kind", "memory")})
-    if docs:
-        coll.upsert(documents=docs, ids=ids, metadatas=metadatas)
-        _bump_user(user_id)
-
-
-def index_whatif(user_id: str, whatif: dict) -> None:
-    if not _init():
-        return
-    coll = _get_collection("user_memory")
-    full = whatif["pay_full"]
-    emi = whatif["emi"]
-    doc = (
-        f"[{user_id}] What-if purchase of Rs.{whatif['purchase_amount']:,.0f}: "
-        f"pay-full score {full['health_score']}, EMI score {emi['health_score']} "
-        f"(EMI Rs.{emi['emi_monthly']:,.0f}/mo over {whatif['tenure_months']} months)."
-    )
-    coll.upsert(
-        documents=[doc],
-        ids=[f"{user_id}_whatif_latest"],
-        metadatas=[{"user_id": user_id, "kind": "whatif"}],
-    )
-    _bump_user(user_id)
+    with _seed_lock:
+        if _seeded:
+            return
+        try:
+            coll = _get_collection("financial_knowledge")
+            if coll.count() < len(KNOWLEDGE_DOCS):
+                ids = [f"kn_{i}" for i in range(len(KNOWLEDGE_DOCS))]
+                metadatas = [{"kind": "knowledge"} for _ in KNOWLEDGE_DOCS]
+                coll.upsert(documents=KNOWLEDGE_DOCS, ids=ids, metadatas=metadatas)
+            _seeded = True
+        except Exception:  # noqa: BLE001
+            logger.warning("Knowledge seeding failed; continuing.", exc_info=True)
 
 
 def _query_knowledge(q_emb: list | None, query: str, k: int) -> list[tuple[str, float]]:
+    _seed_knowledge()
     coll = _get_collection("financial_knowledge")
     try:
         if q_emb is not None:
