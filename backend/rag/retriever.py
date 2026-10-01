@@ -46,7 +46,11 @@ _cache_lock = threading.Lock()
 
 def _init() -> bool:
     global _client, _embed_fn, _available
-    if os.getenv("ENABLE_RAG", "true").strip().lower() in {"false", "0", "no", "off"}:
+    enable_rag = os.getenv("ENABLE_RAG")
+    if enable_rag is not None:
+        if enable_rag.strip().lower() in {"false", "0", "no", "off"}:
+            return False
+    elif os.getenv("RENDER") or os.getenv("RENDER_SERVICE_ID"):
         return False
     if _available:
         return True
