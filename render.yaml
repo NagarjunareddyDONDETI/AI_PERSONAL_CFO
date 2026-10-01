@@ -23,6 +23,8 @@ services:
         value: "30"
       - key: MAX_TRANSACTIONS_LIMIT
         value: "15000"
+      - key: ENABLE_RAG
+        value: "false"
       - key: ONNX_NUM_THREADS
         value: "1"
       - key: OMP_NUM_THREADS
