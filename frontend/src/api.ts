@@ -434,8 +434,10 @@ export interface VoiceAskResult {
   response: string;
   /** Speech-shaped answer, matching the audio. */
   speech: string;
-  /** base64 mp3, or null when TTS was off or failed. */
+  /** base64 audio (see audio_mime), or null when TTS was off or failed. */
   audio_b64?: string | null;
+  /** "audio/wav" from Voicebox, "audio/mpeg" from the cloud fallbacks. */
+  audio_mime?: string | null;
   tts_error?: string | null;
   llm_used?: boolean;
   confidence?: number;
@@ -653,6 +655,81 @@ export async function voiceAskStream(
 
 export async function getVoiceWakeConfig(): Promise<VoiceWakeConfig> {
   return handle(await fetch(`${BASE}/voice/wake-config`));
+}
+
+// ---------- Finzo voice chat (push-to-talk, Voicebox-backed) ----------
+
+/** One push-to-talk turn. Same shape as VoiceAskResult plus the TTS details. */
+export interface FinzoVoiceChatResult extends VoiceAskResult {
+  /** Content type of `audio_b64`: Voicebox returns WAV, fallbacks return MP3. */
+  audio_mime?: string | null;
+  /** "voicebox", "gtts", ... or null when nothing spoke. */
+  tts_provider?: string | null;
+}
+
+export interface FinzoVoiceHealth {
+  voicebox: {
+    ok: boolean;
+    status?: string | null;
+    error?: string | null;
+    latency_ms?: number;
+    config?: { enabled: boolean; voice_id_configured: boolean; local: boolean };
+  };
+  stt_providers: string[];
+  tts_providers: string[];
+  handsfree: { running: boolean; state: string };
+}
+
+export interface HandsFreeStatus {
+  running: boolean;
+  state: string;
+  wake_word?: string | null;
+  stt?: string;
+  tts?: string;
+  error?: string | null;
+  /** Only returned to the account the service answers for. */
+  last_transcript?: string;
+  last_response?: string;
+}
+
+/**
+ * Send a recorded question (or a typed fallback) and get a spoken answer.
+ *
+ * Every figure in the answer comes from the backend's computed analysis; this
+ * call only carries audio in and audio out.
+ */
+export async function finzoVoiceChat(
+  input: { audio?: Blob | null; transcript?: string },
+  opts: { speak?: boolean; signal?: AbortSignal } = {}
+): Promise<FinzoVoiceChatResult> {
+  const form = new FormData();
+  if (input.audio) {
+    const ext = input.audio.type.includes("ogg")
+      ? "ogg"
+      : input.audio.type.includes("mp4")
+        ? "m4a"
+        : "webm";
+    form.append("file", input.audio, `question.${ext}`);
+  }
+  const transcript = input.transcript?.trim();
+  if (transcript) form.append("transcript", transcript);
+  form.append("speak", String(opts.speak ?? true));
+  return handle(
+    await fetch(`${BASE}/finzo/voice/chat`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: form,
+      signal: opts.signal,
+    })
+  );
+}
+
+export async function getFinzoVoiceHealth(): Promise<FinzoVoiceHealth> {
+  return authGet("/finzo/voice/health");
+}
+
+export async function getHandsFreeStatus(): Promise<HandsFreeStatus> {
+  return authGet("/voice/handsfree/status");
 }
 
 export async function endVoiceSession(): Promise<{ ended: boolean }> {

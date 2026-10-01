@@ -17,16 +17,18 @@ def simulate_purchase(
     tenure_months: int = 12,
     current_savings: float | None = None,
 ) -> dict:
-    months = monthly_summary["months"]
+    months = monthly_summary.get("months", []) if isinstance(monthly_summary, dict) else []
     num_months = max(1, len(months))
 
-    monthly_income = health_score.get("income", 0.0)
-    monthly_expenses = health_score.get("expenses", 0.0) or 1.0
+    monthly_income = health_score.get("income", 0.0) if isinstance(health_score, dict) else 0.0
+    monthly_expenses = (health_score.get("expenses", 0.0) if isinstance(health_score, dict) else 0.0) or 1.0
 
     # Estimate current savings from cumulative surplus if not provided.
     if current_savings is None:
-        total_income = sum(monthly_summary["monthly_income"].values())
-        total_expenses = sum(monthly_summary["monthly_expenses"].values())
+        inc_dict = monthly_summary.get("monthly_income", {}) if isinstance(monthly_summary, dict) else {}
+        exp_dict = monthly_summary.get("monthly_expenses", {}) if isinstance(monthly_summary, dict) else {}
+        total_income = sum(inc_dict.values())
+        total_expenses = sum(exp_dict.values())
         current_savings = max(0.0, total_income - total_expenses)
 
     anomalies_count = health_score.get("anomalies_count", 0)

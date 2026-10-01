@@ -4,6 +4,26 @@ A deterministic, year-by-year projection engine plus scenario persistence.
 """
 from __future__ import annotations
 
-from .engine import DEFAULT_ASSUMPTIONS, derive_current_state, simulate
+from agents.twin import (
+    SAFE_WITHDRAWAL_RATE,
+    Goal,
+    GoalTimeline,
+    RetirementEstimate,
+    ScenarioInput,
+    TwinResult,
+    YearProjection,
+    defaults_from_result,
+    simulate,
+)
 
-__all__ = ["simulate", "derive_current_state", "DEFAULT_ASSUMPTIONS"]
+__all__ = [
+    "SAFE_WITHDRAWAL_RATE",
+    "Goal",
+    "GoalTimeline",
+    "RetirementEstimate",
+    "ScenarioInput",
+    "TwinResult",
+    "YearProjection",
+    "defaults_from_result",
+    "simulate",
+]

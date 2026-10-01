@@ -62,6 +62,11 @@ _CURRENCY_RE = re.compile(
 )
 _PERCENT_RE = re.compile(r"(\d+(?:\.\d+)?)\s*%")
 _SPACE_RE = re.compile(r"[ \t]+")
+_UNICODE_SPACES = str.maketrans({
+    "\u00a0": " ", "\u202f": " ", "\u2009": " ", "\u2007": " ",
+    # Non-breaking and Unicode hyphens ("at\u2011risk"): some voices spell them out.
+    "\u2010": "-", "\u2011": "-",
+})
 _BLANKLINE_RE = re.compile(r"\n{2,}")
 
 
@@ -150,27 +155,48 @@ def speakable_numbers(text: str) -> str:
     return _PERCENT_RE.sub(r"\1 percent", out)
 
 
-def limit_sentences(text: str, max_sentences: int) -> str:
-    """Keep the first `max_sentences` sentences.
+def limit_sentences(text: str, max_sentences: int, max_chars: int = 0) -> str:
+    """Keep the first `max_sentences` sentences, and at most `max_chars` of them.
 
     Voice answers should be 1-3 sentences for simple questions; a chat answer
     that runs six sentences is tiring to listen to and usually front-loads the
     actual figure anyway.
+
+    A sentence count alone is not enough: LLM sentences can run to 200+
+    characters, and four of them were measured at 47 seconds of speech. So
+    ``max_chars`` also caps the total. Cuts only ever fall between sentences,
+    never inside one, so a figure is never spoken without its context. The
+    first sentence is always kept, whatever its length, because it carries the
+    answer.
     """
-    if max_sentences <= 0:
-        return text
     sentences = [s for s in _SENTENCE_SPLIT_RE.split(text.strip()) if s.strip()]
-    if len(sentences) <= max_sentences:
-        return text.strip()
-    return " ".join(sentences[:max_sentences]).strip()
+    if max_sentences > 0:
+        sentences = sentences[:max_sentences]
+    if max_chars > 0:
+        kept: list[str] = []
+        used = 0
+        for sentence in sentences:
+            cost = len(sentence) + (1 if kept else 0)
+            if kept and used + cost > max_chars:
+                break
+            kept.append(sentence)
+            used += cost
+        sentences = kept
+    return " ".join(sentences).strip()
 
 
-def for_speech(text: str, *, max_sentences: int = 4) -> str:
+#: Spoken-answer budget. About 20 seconds at a calm pace. The full written
+#: answer is still returned for the screen; this only limits what is read aloud.
+MAX_SPOKEN_CHARS = 300
+
+
+def for_speech(text: str, *, max_sentences: int = 4, max_chars: int = MAX_SPOKEN_CHARS) -> str:
     """Full written-to-spoken pipeline.
 
     Order matters: tables and lists are flattened while their markdown markers
     are still present, then emphasis is stripped, then numbers are made
-    pronounceable, and only then is length capped.
+    pronounceable, and only then is length capped. ``max_chars=0`` disables the
+    character cap.
     """
     if not text or not text.strip():
         return ""
@@ -179,9 +205,12 @@ def for_speech(text: str, *, max_sentences: int = 4) -> str:
     out = strip_markdown(out)
     out = speakable_numbers(out)
     out = out.replace("\n", " ")
+    # LLMs emit narrow and non-breaking spaces around figures ("April\u202f2025").
+    # Some synthesizers pause or mispronounce on them, so speak plain spaces.
+    out = out.translate(_UNICODE_SPACES)
     out = _BLANKLINE_RE.sub(" ", out)
     out = _SPACE_RE.sub(" ", out).strip()
-    return limit_sentences(out, max_sentences)
+    return limit_sentences(out, max_sentences, max_chars)
 
 
 #: Where a streamed answer can be cut for speech. Sentence-ending punctuation
@@ -204,19 +233,30 @@ class SentenceStreamer:
     text should stay complete even once the assistant has stopped reading aloud.
     """
 
-    def __init__(self, *, max_sentences: int = 4) -> None:
+    def __init__(self, *, max_sentences: int = 4, max_chars: int = MAX_SPOKEN_CHARS) -> None:
         self._buffer = ""
         self._spoken = 0
+        self._chars = 0
         self._max_sentences = max_sentences
+        self._max_chars = max_chars
 
     @property
     def budget_left(self) -> bool:
         return self._max_sentences <= 0 or self._spoken < self._max_sentences
 
+    def _admit(self, spoken: str) -> bool:
+        """Same rule as limit_sentences: the first sentence always, later ones
+        only while the character budget holds."""
+        if self._spoken and self._max_chars > 0 and self._chars + len(spoken) > self._max_chars:
+            self._spoken = max(self._spoken, self._max_sentences)  # budget spent
+            return False
+        self._spoken += 1
+        self._chars += len(spoken)
+        return True
+
     def _prepare(self, chunk: str) -> str:
-        # max_sentences=0 disables capping: the cap is applied across the whole
-        # stream by _spoken, not per chunk.
-        return for_speech(chunk, max_sentences=0)
+        # Caps are applied across the whole stream by _admit, not per chunk.
+        return for_speech(chunk, max_sentences=0, max_chars=0)
 
     def feed(self, delta: str) -> list[str]:
         """Add streamed text, returning any sentences now ready to speak."""
@@ -233,9 +273,8 @@ class SentenceStreamer:
             if not self.budget_left:
                 continue
             spoken = self._prepare(head)
-            if spoken:
+            if spoken and self._admit(spoken):
                 ready.append(spoken)
-                self._spoken += 1
         return ready
 
     def flush(self) -> list[str]:
@@ -244,9 +283,8 @@ class SentenceStreamer:
         if not tail.strip() or not self.budget_left:
             return []
         spoken = self._prepare(tail)
-        if not spoken:
+        if not spoken or not self._admit(spoken):
             return []
-        self._spoken += 1
         return [spoken]
 
 

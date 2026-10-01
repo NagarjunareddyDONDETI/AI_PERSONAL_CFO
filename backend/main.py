@@ -60,6 +60,7 @@ from voice import voice_service  # noqa: E402
 from voice import conversation as voice_conversation  # noqa: E402
 from voice import speech as voice_speech  # noqa: E402
 from voice import wake as voice_wake  # noqa: E402
+from voice.handsfree import state as handsfree_state  # noqa: E402
 
 logger = logging.getLogger("main")
 
@@ -1092,6 +1093,22 @@ def _voice_failure(code: str, session=None, **extra) -> dict:
     return payload
 
 
+def _audio_mime(audio: bytes | None) -> str | None:
+    """Content type of synthesized audio, from its magic bytes.
+
+    Providers differ: Voicebox returns WAV, gTTS and Edge return MP3. The client
+    builds a data URL from this, and a wrong type makes some browsers refuse to
+    play the clip at all.
+    """
+    if not audio:
+        return None
+    if audio[:4] == b"RIFF" and audio[8:12] == b"WAVE":
+        return "audio/wav"
+    if audio[:4] == b"OggS":
+        return "audio/ogg"
+    return "audio/mpeg"
+
+
 def _summarize_conversation_safely(user_id: str, history: list[dict]) -> None:
     """Background memory write. Runs after the response, so it must swallow its
     own errors: there is no client left to report them to."""
@@ -1209,10 +1226,12 @@ async def voice_ask(
         session.touch()
         ack = voice_speech.acknowledgement()
         audio_b64 = None
+        audio = None
         if speak:
             audio, _err = voice_service.synthesize(ack)
             audio_b64 = base64.b64encode(audio).decode() if audio else None
         return {
+            "audio_mime": _audio_mime(audio),
             "ok": True,
             "action": "acknowledge",
             "transcript": transcript,
@@ -1284,10 +1303,12 @@ async def voice_ask(
     # ---- text to speech ---------------------------------------------------- #
     audio_b64: str | None = None
     tts_error: str | None = None
+    audio_mime: str | None = None
     if speak and speech_text:
         audio, tts_error = voice_service.synthesize(speech_text)
         if audio:
             audio_b64 = base64.b64encode(audio).decode()
+            audio_mime = _audio_mime(audio)
         else:
             # A TTS failure must not lose the answer: the client shows the text
             # and the conversation continues.
@@ -1308,6 +1329,7 @@ async def voice_ask(
         "response": written,
         "speech": speech_text,
         "audio_b64": audio_b64,
+        "audio_mime": audio_mime,
         "tts_error": tts_error,
         "llm_used": bool(answer.get("llm_used")),
         "retrieved_context": answer.get("retrieved_context", []),
@@ -1559,6 +1581,111 @@ async def voice_ask_stream(
         # deliver it as one blob, silently undoing the streaming.
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+# ---------- Finzo voice chat (Voicebox-backed voice I/O) ----------
+#
+# Push-to-talk entry point for the dashboard. Deliberately a thin wrapper: the
+# reasoning is `voice_ask` -> `converse()`, the same chain typed chat uses, so no
+# financial logic is duplicated here. What this adds is voice I/O reporting:
+# which STT and TTS provider handled the turn, and the audio's real mime type,
+# since Voicebox returns WAV where the cloud fallbacks return MP3.
+
+
+@app.post("/finzo/voice/chat")
+async def finzo_voice_chat(
+    user_id: CurrentUserId,
+    background: BackgroundTasks,
+    file: UploadFile | None = File(None),
+    transcript: str = Form(""),
+    speak: bool = Form(True),
+    timeout_seconds: int = Form(voice_conversation.DEFAULT_TIMEOUT_SECONDS),
+) -> dict:
+    """One spoken exchange: audio or transcript in, verified answer + speech out."""
+    result = await voice_ask(
+        user_id=user_id,
+        background=background,
+        file=file,
+        speak=False,  # synthesized below, so the provider can be reported
+        timeout_seconds=timeout_seconds,
+        client_transcript=transcript,
+    )
+
+    audio_b64: str | None = None
+    audio_mime: str | None = None
+    tts_provider: str | None = None
+    tts_error: str | None = None
+    # Speak failures too: "Sorry, I didn't catch that" is part of the dialogue.
+    spoken = result.get("speech") or ""
+    if speak and spoken and result.get("action") != "stop":
+        tts = voice_service.synthesize_result(spoken)
+        tts_provider = tts.provider or None
+        if tts.ok:
+            audio_b64 = base64.b64encode(tts.audio).decode()
+            audio_mime = tts.mime or _audio_mime(tts.audio)
+        else:
+            tts_error = tts.error
+            logger.warning("finzo.voice.chat tts failed provider=%s", tts.provider)
+
+    logger.info(
+        "finzo.voice.chat ok=%s action=%s stt=%s tts=%s spoken=%s",
+        result.get("ok"), result.get("action"), result.get("stt_provider"),
+        tts_provider, audio_b64 is not None,
+    )
+    return {
+        **result,
+        "audio_b64": audio_b64,
+        "audio_mime": audio_mime,
+        "tts_provider": tts_provider,
+        "tts_error": tts_error,
+    }
+
+
+@app.get("/finzo/voice/health")
+def finzo_voice_health(_: CurrentUserId) -> dict:
+    """Is Voicebox reachable, and which providers would serve a request now."""
+    status = handsfree_state.read_status()
+    return {
+        "voicebox": voice_service.voicebox_health(fresh=True),
+        "stt_providers": voice_service.service.stt.available(),
+        "tts_providers": voice_service.service.tts.available(),
+        "handsfree": {"running": status.get("running"), "state": status.get("state")},
+    }
+
+
+@app.get("/voice/handsfree/status")
+def voice_handsfree_status(user_id: CurrentUserId) -> dict:
+    """State of the standalone hands-free daemon, for the dashboard orb.
+
+    Transcript and answer are only returned to the account the daemon is running
+    for; anyone else logged in sees the state alone.
+    """
+    doc = handsfree_state.read_status()
+    public = {
+        k: doc.get(k)
+        for k in ("running", "state", "age_seconds", "stt", "tts", "wake_word", "error")
+    }
+    if doc.get("running") and doc.get("user_id") == user_id:
+        public["last_transcript"] = doc.get("last_transcript")
+        public["last_response"] = doc.get("last_response")
+    return public
+
+
+@app.post("/voice/handsfree/stop")
+def voice_handsfree_stop(user_id: CurrentUserId) -> dict:
+    """Ask the daemon to exit. Only its own account may stop it.
+
+    There is intentionally no matching /start: launching a process that opens the
+    microphone should come from the person at the machine
+    (start_finzo_voice.bat), not from an HTTP request.
+    """
+    doc = handsfree_state.read_status()
+    if not doc.get("running"):
+        return {"stopping": False, "reason": "not running"}
+    if doc.get("user_id") != user_id:
+        raise HTTPException(status_code=403, detail="Hands-free is running for another account.")
+    handsfree_state.stop_request_path().write_text(str(time.time()), encoding="utf-8")
+    return {"stopping": True}
 
 
 @app.get("/voice/session")

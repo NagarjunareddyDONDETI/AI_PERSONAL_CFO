@@ -225,12 +225,13 @@ export function useFinzo({ settings }: Options) {
     []
   );
 
-  const playMp3 = useCallback((base64: string): Promise<void> => {
+  const playMp3 = useCallback((base64: string, mime?: string | null): Promise<void> => {
     return new Promise((resolve) => {
       try {
         if (!audioRef.current) audioRef.current = new Audio();
         const el = audioRef.current;
-        el.src = `data:audio/mpeg;base64,${base64}`;
+        // Voicebox returns WAV; labelling it MP3 makes some browsers refuse it.
+        el.src = `data:${mime || "audio/mpeg"};base64,${base64}`;
         const done = () => resolve();
         el.onended = done;
         el.onerror = done;
@@ -477,7 +478,7 @@ export function useFinzo({ settings }: Options) {
       // Finzo must not hear itself: recognition is paused for the duration.
       pauseRecognitionRef.current?.();
       if (result.audio_b64) {
-        await playMp3(result.audio_b64);
+        await playMp3(result.audio_b64, result.audio_mime);
       } else if (spoken && settingsRef.current.autoSpeak) {
         // TTS unavailable server-side; the browser voice keeps it hands-free.
         await speakLocally(spoken, result.intent);

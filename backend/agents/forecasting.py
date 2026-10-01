@@ -27,17 +27,17 @@ def forecast_next_month(monthly_summary: dict, top_n: int = 4) -> dict:
     # Fit on complete months only. A partial trailing month (a statement ending
     # on the 1st) drags the regression into a steep decline, and clamping the
     # negative prediction at zero is what produced a forecast of exactly 0.
-    months = monthly_summary.get("complete_months") or monthly_summary["months"]
-    monthly_expenses = monthly_summary["monthly_expenses"]
+    months = monthly_summary.get("complete_months") or monthly_summary.get("months", [])
+    monthly_expenses = monthly_summary.get("monthly_expenses", {})
 
     expense_series = [monthly_expenses.get(m, 0.0) for m in months]
     total_forecast = _predict_series(expense_series)
 
     # Per-category forecast for the top categories by total spend.
-    category_totals = monthly_summary["category_totals"]
+    category_totals = monthly_summary.get("category_totals", {})
     top_categories = sorted(category_totals, key=category_totals.get, reverse=True)[:top_n]
 
-    by_month_category = monthly_summary["by_month_category"]
+    by_month_category = monthly_summary.get("by_month_category", {})
     category_forecast: dict[str, float] = {}
     for cat in top_categories:
         series = [abs(by_month_category.get(m, {}).get(cat, 0.0)) for m in months]

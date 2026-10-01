@@ -59,6 +59,19 @@ def synthesize(text: str) -> tuple[bytes | None, str | None]:
     return result.audio, result.error
 
 
+def synthesize_result(text: str):
+    """Full ``TTSResult``, including which provider spoke and its mime type."""
+    return service.synthesize(text)
+
+
+def voicebox_health(*, fresh: bool = True) -> dict:
+    """Voicebox reachability plus its non-secret configuration."""
+    from .voicebox import get_client
+
+    client = get_client()
+    return {**client.health(use_cache=not fresh), "config": client.config.snapshot()}
+
+
 def capabilities() -> dict:
     return service.capabilities()
 

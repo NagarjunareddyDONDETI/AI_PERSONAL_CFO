@@ -26,6 +26,10 @@ frontend/vite.config.d.ts
 # Local dev server logs
 .logs/
 
+# Hands-free voice runtime: status file, stop flag, service log. The log can
+# contain transcribed questions when VOICE_DEBUG=true.
+backend/.finzo/
+
 # tsc -b artifacts. vite.config.js in particular shadows vite.config.ts, so a
 # committed copy would make config edits appear to do nothing.
 frontend/vite.config.js

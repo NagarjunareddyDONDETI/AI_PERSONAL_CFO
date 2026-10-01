@@ -9,9 +9,9 @@ _SUBSCRIPTION_KEYWORDS = ["netflix", "prime", "hotstar", "spotify", "youtube"]
 
 def suggest_savings(categorized: list[dict], monthly_summary: dict) -> list[dict]:
     suggestions: list[dict] = []
-    category_totals = monthly_summary["category_totals"]
+    category_totals = monthly_summary.get("category_totals", {})
     total_expenses = sum(category_totals.values()) or 1.0
-    num_months = max(1, len(monthly_summary["months"]))
+    num_months = max(1, len(monthly_summary.get("months", [])))
 
     # Rule: Food > 15% of expenses
     food = category_totals.get("Food", 0.0)

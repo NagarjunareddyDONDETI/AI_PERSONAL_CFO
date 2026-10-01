@@ -9,6 +9,7 @@ from ..config import VoiceConfig
 from .base import TTSProvider, TTSResult
 from .edge_tts_provider import EdgeTTSProvider
 from .gtts_tts import GTTSProvider
+from .voicebox import VoiceboxTTSProvider
 
 logger = logging.getLogger("voice.tts.registry")
 
@@ -17,6 +18,7 @@ class TTSRegistry:
     def __init__(self, config: VoiceConfig) -> None:
         self._config = config
         self._providers: dict[str, TTSProvider] = {
+            "voicebox": VoiceboxTTSProvider(),
             "gtts": GTTSProvider(),
             "edge_tts": EdgeTTSProvider(config.edge_voice),
         }
@@ -34,8 +36,16 @@ class TTSRegistry:
     def available(self) -> list[str]:
         return [p.name for p in self._ordered()]
 
-    def synthesize(self, text: str) -> TTSResult:
+    def synthesize(self, text: str, *, only: list[str] | None = None) -> TTSResult:
+        """Synthesize with failover.
+
+        ``only`` restricts the chain to named providers. The hands-free daemon uses
+        it to stay on local engines, so answer text is never sent to a cloud TTS
+        just because the local one is closed.
+        """
         chain = self._ordered()
+        if only is not None:
+            chain = [p for p in chain if p.name in only]
         if not chain:
             return TTSResult(provider="none", error="No TTS provider available. pip install gtts")
         last: TTSResult | None = None

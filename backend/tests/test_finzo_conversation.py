@@ -262,3 +262,67 @@ def test_reset_context_keeps_session_identity(session):
     session.reset_context()
     assert session.last_category is None
     assert session.voice_session_id == sid
+
+
+# ---- time-shift follow-ups ("what about last month?") ---------------------- #
+def _ask_food(session):
+    session.note_turn(
+        text="how much did i spend on food this month",
+        resolved_text="how much did i spend on food this month",
+        intent="spending", response="0 rupees", duration_ms=800,
+    )
+
+
+@pytest.mark.parametrize(
+    "follow_up,expected",
+    [
+        ("what about last month", "How much did I spend on Food last month?"),
+        ("and last month", "How much did I spend on Food last month?"),
+        ("last month", "How much did I spend on Food last month?"),
+        ("how about the previous month", "How much did I spend on Food previous month?"),
+        ("what about august", "How much did I spend on Food in August?"),
+        ("august", "How much did I spend on Food in August?"),
+    ],
+)
+def test_time_shift_keeps_the_topic(session, follow_up, expected):
+    """Observed bug: 'what about last month' after a food question produced a
+    whole-month summary, because the category was dropped."""
+    _ask_food(session)
+    assert session.resolve(follow_up) == expected
+
+
+def test_time_shift_then_why_still_knows_the_topic(session):
+    _ask_food(session)
+    q2 = session.resolve("what about last month")
+    session.note_turn(text="what about last month", resolved_text=q2,
+                      intent="spending", response="133 rupees", duration_ms=700)
+    assert session.last_category == "Food"
+    assert "Food" in session.resolve("why did it increase")
+
+
+def test_new_category_and_period_together(session):
+    _ask_food(session)
+    assert session.resolve("what about shopping last month") == \
+        "How much did I spend on Shopping last month?"
+
+
+def test_time_shift_on_health_score(session):
+    session.note_turn(text="what is my health score", resolved_text="what is my health score",
+                      intent="score", response="20", duration_ms=500)
+    assert session.resolve("what about last month") == \
+        "What was my financial health score last month?"
+
+
+def test_standalone_question_with_a_period_is_untouched(session):
+    _ask_food(session)
+    q = "how much did i spend on travel last month"
+    assert session.resolve(q) == q
+
+
+def test_time_shift_without_context_is_left_alone(session):
+    assert session.resolve("what about last month") == "what about last month"
+
+
+def test_next_month_is_a_forecast_not_a_time_shift(session):
+    _ask_food(session)
+    assert "last month" not in session.resolve("what about next month")

@@ -40,10 +40,10 @@ def _large_transaction_limit(expenses: list[float]) -> float:
 
 def detect_anomalies(categorized: list[dict], monthly_summary: dict) -> list[dict]:
     anomalies: list[dict] = []
-    by_month_category = monthly_summary["by_month_category"]
+    by_month_category = monthly_summary.get("by_month_category", {})
     # Partial boundary months are not comparable to full ones, so they would
     # register as spikes or drops that never happened.
-    months = monthly_summary.get("complete_months") or monthly_summary["months"]
+    months = monthly_summary.get("complete_months") or monthly_summary.get("months", [])
 
     # --- Check 1: month-category totals vs category history ---
     # Build per-category series of monthly EXPENSE totals (positive numbers).

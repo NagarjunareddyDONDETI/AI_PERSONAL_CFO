@@ -34,7 +34,7 @@ def build_health_score(
     active_emis: int = 0,
 ) -> dict:
     """Compute the score using the latest full month as the reference period."""
-    months = monthly_summary["months"]
+    months = monthly_summary.get("months", [])
     if not months:
         return {
             "score": 0,
@@ -51,22 +51,22 @@ def build_health_score(
     # ending on the 1st) reports a whole month's health from a day of data.
     scored = monthly_summary.get("complete_months") or months
     latest = scored[-1]
-    income = monthly_summary["monthly_income"].get(latest, 0.0)
-    expenses = monthly_summary["monthly_expenses"].get(latest, 0.0)
+    monthly_income = monthly_summary.get("monthly_income", {})
+    monthly_expenses = monthly_summary.get("monthly_expenses", {})
+    income = monthly_income.get(latest, 0.0)
+    expenses = monthly_expenses.get(latest, 0.0)
 
     # Estimate emergency fund from average monthly surplus if not supplied.
     if emergency_fund_months == 0.0:
         surpluses = [
-            monthly_summary["monthly_income"].get(m, 0.0)
-            - monthly_summary["monthly_expenses"].get(m, 0.0)
+            monthly_income.get(m, 0.0) - monthly_expenses.get(m, 0.0)
             for m in scored
         ]
         total_surplus = sum(s for s in surpluses if s > 0)
         # Averaging over partial months deflates the denominator and inflates
         # the resulting number of months of cover.
         avg_expense = (
-            sum(monthly_summary["monthly_expenses"].get(m, 0.0) for m in scored)
-            / len(scored)
+            sum(monthly_expenses.get(m, 0.0) for m in scored) / len(scored)
         ) or 1.0
         emergency_fund_months = round(total_surplus / avg_expense, 2)
 

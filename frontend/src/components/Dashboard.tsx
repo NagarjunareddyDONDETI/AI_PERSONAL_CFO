@@ -11,6 +11,7 @@ import DebatePanel from "./DebatePanel";
 import ErrorBoundary from "./ErrorBoundary";
 import ExplainabilityPanel from "./ExplainabilityPanel";
 import FinzoPanel from "./FinzoPanel";
+import FinzoVoiceButton from "./FinzoVoiceButton";
 import ForecastChart from "./ForecastChart";
 import GoalPlannerPanel from "./GoalPlannerPanel";
 import HealthScorePanel from "./HealthScorePanel";
@@ -181,6 +182,10 @@ export default function Dashboard({
                 nobody can turn on. Typing stays available directly below. */}
             <Row>
               <FinzoPanel delay={0.05} />
+            </Row>
+            {/* Push-to-talk, for anyone who would rather press than say "Hey Finzo". */}
+            <Row>
+              <FinzoVoiceButton delay={0.08} />
             </Row>
             <Row>
               <ChatPanel capabilities={capabilities} delay={0.1} />

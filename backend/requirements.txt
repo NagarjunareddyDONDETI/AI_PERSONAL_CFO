@@ -48,5 +48,15 @@ respx==0.22.0
 # gtts pins click<8.2 while chromadb's typer wants a newer click. pip reports the
 # conflict, but gtts only uses click for its CLI, so the Python API is unaffected.
 gtts==2.5.4
+
+# Hands-free Finzo + local STT. All four ship binary wheels for Python 3.13 on
+# Windows, and none of them pulls torch: faster-whisper runs on CTranslate2 and
+# reuses the onnxruntime chromadb already installs.
+faster-whisper==1.1.1
+sounddevice==0.5.1
+# Maintained binary-wheel fork of webrtcvad; the original needs a C compiler.
+webrtcvad-wheels==2.0.14
+# Offline Windows SAPI voice, the fallback when the Voicebox app is closed.
+pyttsx3==2.98
 # openai-whisper is heavy (pulls torch). Install manually if needed:
 #   pip install openai-whisper

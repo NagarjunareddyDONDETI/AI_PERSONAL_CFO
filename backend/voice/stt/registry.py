@@ -7,14 +7,18 @@ import logging
 
 from ..config import VoiceConfig
 from .base import STTProvider, STTResult
+from .faster_whisper_local import FasterWhisperProvider
 from .groq_whisper import GroqWhisperProvider
+from .voicebox import VoiceboxSTTProvider
 from .whisper_local import WhisperLocalProvider
 
 logger = logging.getLogger("voice.stt.registry")
 
 # All known providers keyed by their config id. Add new backends here only.
 _FACTORIES = {
+    "voicebox": VoiceboxSTTProvider,
     "groq_whisper": GroqWhisperProvider,
+    "faster_whisper": FasterWhisperProvider,
     "whisper_local": WhisperLocalProvider,
 }
 
@@ -87,8 +91,9 @@ class STTRegistry:
         return STTResult(text="", provider="none", error="All STT providers failed.")
 
     def preload(self) -> bool:
-        """Warm any offline provider that supports preloading (Whisper)."""
-        local = self._providers.get("whisper_local")
-        if isinstance(local, WhisperLocalProvider):
-            return local.preload()
+        """Warm the first offline provider that supports preloading."""
+        for name in ("faster_whisper", "whisper_local"):
+            provider = self._providers.get(name)
+            if provider is not None and provider.is_available():
+                return bool(getattr(provider, "preload")())
         return False

@@ -34,11 +34,16 @@ def _float(name: str, default: float) -> float:
 class VoiceConfig:
     # Provider priority (first available wins; failover proceeds down the list).
     # Only implemented+available providers are actually used.
+    # Local providers lead: Voicebox, then faster-whisper, keep audio and answer
+    # text on this machine. Cloud providers remain as fallbacks. Voicebox reports
+    # itself unavailable when the app is closed, so it costs nothing when absent.
     stt_priority: list[str] = field(
-        default_factory=lambda: _csv("STT_PROVIDER", ["groq_whisper", "whisper_local"])
+        default_factory=lambda: _csv(
+            "STT_PROVIDER", ["voicebox", "groq_whisper", "faster_whisper", "whisper_local"]
+        )
     )
     tts_priority: list[str] = field(
-        default_factory=lambda: _csv("TTS_PROVIDER", ["gtts", "edge_tts"])
+        default_factory=lambda: _csv("TTS_PROVIDER", ["voicebox", "gtts", "edge_tts"])
     )
 
     # Feature flags.
@@ -51,6 +56,14 @@ class VoiceConfig:
     # STT tuning.
     whisper_model: str = field(default_factory=lambda: os.getenv("WHISPER_MODEL", "small"))
     whisper_lang: str = field(default_factory=lambda: os.getenv("WHISPER_LANG", "en"))
+    # faster-whisper placement. "auto" tries CUDA and falls back to CPU; int8
+    # keeps "small" around 500 MB, which fits a 4 GB laptop GPU with headroom.
+    whisper_device: str = field(
+        default_factory=lambda: os.getenv("WHISPER_DEVICE", "auto").strip().lower()
+    )
+    whisper_compute_type: str = field(
+        default_factory=lambda: os.getenv("WHISPER_COMPUTE_TYPE", "int8").strip().lower()
+    )
     # Confidence is exp(avg_logprob) from Whisper. Clean speech scores roughly
     # 0.6-0.85, so the old 0.75 default flagged most correct transcriptions as
     # low confidence. Whisper treats avg_logprob < -1.0 (~0.37) as a failure;
@@ -76,6 +89,8 @@ class VoiceConfig:
             "enable_auto_retry": self.enable_auto_retry,
             "whisper_model": self.whisper_model,
             "whisper_lang": self.whisper_lang,
+            "whisper_device": self.whisper_device,
+            "whisper_compute_type": self.whisper_compute_type,
             "stt_min_confidence": self.stt_min_confidence,
             "tts_lang": self.tts_lang,
         }

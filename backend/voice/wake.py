@@ -100,15 +100,29 @@ def _edit_distance(a: str, b: str, *, cap: int) -> int:
     return previous[-1]
 
 
-def _token_is_wake(token: str) -> tuple[bool, bool]:
+def _token_is_wake(token: str, wake_word: str = WAKE_WORD) -> tuple[bool, bool]:
     """Return (is_wake, is_exact) for a single normalised token."""
     if not token or token in _DENY:
         return False, False
-    if token == WAKE_WORD:
+    if token == wake_word:
         return True, True
-    if _edit_distance(token, WAKE_WORD, cap=_MAX_EDIT_DISTANCE) <= _MAX_EDIT_DISTANCE:
+    # Fuzzy matching only for names long enough that one edit is still
+    # distinctive; on a three-letter name, distance 1 matches half the language.
+    if len(wake_word) >= 5 and (
+        _edit_distance(token, wake_word, cap=_MAX_EDIT_DISTANCE) <= _MAX_EDIT_DISTANCE
+    ):
         return True, False
     return False, False
+
+
+def wake_name(phrase: str) -> str:
+    """The addressable token of a configured phrase: "hey finzo" -> "finzo".
+
+    Lead-ins are stripped so both "Hey Finzo" and a bare "Finzo" activate, which
+    is what the configured phrase means to a person.
+    """
+    tokens = [t for t in normalize(phrase).split(" ") if t and t not in _LEAD_INS]
+    return tokens[-1] if tokens else WAKE_WORD
 
 
 @dataclass(frozen=True)
@@ -132,13 +146,15 @@ class WakeMatch:
 NO_MATCH = WakeMatch(matched=False)
 
 
-def match_wake_word(text: str) -> WakeMatch:
+def match_wake_word(text: str, *, wake_word: str = WAKE_WORD) -> WakeMatch:
     """Test an utterance for the Finzo wake phrase.
 
     Accepts "Finzo", "finzo", "Hey Finzo", "Okay Finzo!" and the same phrase with
     a query attached. Rejects unrelated speech and words such as "financial",
-    "finance", "fins" and "Fernando".
+    "finance", "fins" and "Fernando". ``wake_word`` is the single name token
+    (see ``wake_name``) for deployments that rename the assistant.
     """
+    wake_word = normalize(wake_word) or WAKE_WORD
     normalized = normalize(text)
     if not normalized:
         return NO_MATCH
@@ -152,7 +168,7 @@ def match_wake_word(text: str) -> WakeMatch:
         if index and any(t not in _LEAD_INS for t in tokens[:index]):
             break
 
-        is_wake, is_exact = _token_is_wake(tokens[index])
+        is_wake, is_exact = _token_is_wake(tokens[index], wake_word)
         if not is_wake:
             continue
 

@@ -197,3 +197,55 @@ def test_unknown_error_code_falls_back():
 
 def test_error_speech_mentions_ai_service_for_llm_failure():
     assert "AI service" in error_speech("LLM_FAILED")
+
+
+# ---- spoken length budget --------------------------------------------------- #
+# The exact answer that ran to 47 seconds of speech on Voicebox.
+_LONG_REAL_ANSWER = (
+    "Last month (August 2026) you earned 21,925 rupees and spent 20,476.5 rupees, "
+    "leaving a net 1,448 rupees surplus (about a 6.6 percent savings rate). Your "
+    "biggest outflow was Uncategorized at 19,618.5 rupees, with smaller amounts for "
+    "Food (133 rupees), Utilities (696 rupees), Travel (28 rupees) and a single 1 "
+    "rupees entertainment purchase. The health score stayed at 20, putting you in "
+    "the \u201cat\u2011risk\u201d zone and giving you only 0.07 months of "
+    "emergency\u2011fund coverage."
+)
+
+
+def test_long_answer_is_cut_to_the_spoken_budget():
+    from voice.speech import MAX_SPOKEN_CHARS
+
+    out = for_speech(_LONG_REAL_ANSWER)
+    assert len(out) <= MAX_SPOKEN_CHARS
+    # The answer itself survives intact, figures and all.
+    assert out.startswith("Last month (August 2026) you earned 21,925 rupees")
+    assert "20,476.5" in out and out.endswith(".")
+
+
+def test_budget_never_cuts_inside_a_sentence():
+    out = for_speech("First part. " + "Second sentence is fine. " * 3, max_chars=40)
+    assert out == "First part. Second sentence is fine."
+
+
+def test_first_sentence_is_kept_even_if_over_budget():
+    long_first = "You spent " + "a lot " * 80 + "on food."
+    assert for_speech(long_first + " Second.", max_chars=50) == long_first
+
+
+def test_char_budget_can_be_disabled():
+    assert for_speech(_LONG_REAL_ANSWER, max_sentences=0, max_chars=0).count(".") >= 3
+
+
+def test_unicode_hyphens_become_plain():
+    assert "\u2011" not in for_speech("You are at\u2011risk.")
+
+
+def test_streamer_respects_the_char_budget():
+    from voice.speech import SentenceStreamer
+
+    streamer = SentenceStreamer(max_sentences=4, max_chars=120)
+    spoken = []
+    for i in range(0, len(_LONG_REAL_ANSWER), 7):  # token-sized deltas
+        spoken += streamer.feed(_LONG_REAL_ANSWER[i:i + 7])
+    spoken += streamer.flush()
+    assert len(spoken) == 1 and spoken[0].startswith("Last month (August 2026)")

@@ -76,7 +76,34 @@ _WHY_MARKERS = ("why", "how come", "what caused", "what's causing", "whats causi
 _SWITCH_MARKERS = ("what about", "how about", "and what about", "what of", "and")
 _PRONOUN_MARKERS = ("that", "it", "this", "those", "them")
 
+_MONTHS = (
+    "january", "february", "march", "april", "may", "june", "july",
+    "august", "september", "october", "november", "december",
+)
+# A period of time with no subject: "last month", "in august", "the previous week".
+# "next month" is deliberately absent: it already means forecast (see
+# _METRIC_PATTERNS), so it is handled as a metric change, not a time shift.
+_TIME_RE = re.compile(
+    r"\b(?:(?:last|this|previous|past|current)\s+(?:month|week|year|quarter))\b"
+    r"|\b(?:in\s+)?(?:" + "|".join(_MONTHS) + r")\b"
+    r"|\b(?:yesterday|today)\b"
+)
+# Metrics where "...in August" makes sense; a forecast is always about the future.
+_TIME_SHIFTABLE = ("spending", "health_score", "anomaly", "savings")
+
 _WORD_RE = re.compile(r"[a-z]+")
+
+
+def detect_period(text: str) -> str | None:
+    """The time period named in an utterance, e.g. "last month" or "in August"."""
+    match = _TIME_RE.search(normalize(text))
+    if not match:
+        return None
+    phrase = match.group(0)
+    for month in _MONTHS:
+        if month in phrase:
+            return f"in {month.capitalize()}"
+    return phrase
 
 
 def _words(text: str) -> list[str]:
@@ -177,11 +204,28 @@ class VoiceSession:
         spoken_category = detect_category(normalized)
         spoken_metric = detect_metric(normalized)
 
+        spoken_period = detect_period(normalized)
+
         # "What about shopping?" -- new category, carry the previous metric.
+        # "What about shopping last month?" keeps the period too.
         if spoken_category and not spoken_metric:
             if any(normalized.startswith(m + " ") for m in _SWITCH_MARKERS):
                 metric = self.last_metric or "spending"
-                return self._phrase(metric, spoken_category)
+                return self._phrase(metric, spoken_category, spoken_period)
+
+        # "What about last month?" / "And in August?" -- same subject, new period.
+        # Without this the category is dropped and the model answers a far
+        # broader question than the one asked (observed: a whole-month summary
+        # instead of last month's food spending).
+        if spoken_period and not spoken_category and not spoken_metric:
+            bare = spoken_period.lower()
+            # A bare period ("last month?", "august") or a switch ("what about ...").
+            is_followup = normalized in (bare, bare.removeprefix("in ")) or any(
+                normalized.startswith(m + " ") for m in _SWITCH_MARKERS
+            )
+            metric = self.last_metric or ("spending" if self.last_category else None)
+            if is_followup and metric in _TIME_SHIFTABLE:
+                return self._phrase(metric, self.last_category, spoken_period)
 
         # "Why?" / "Why is that high?" -- carry both metric and category.
         if any(normalized == m or normalized.startswith(m + " ") for m in _WHY_MARKERS):
@@ -204,23 +248,25 @@ class VoiceSession:
 
         return normalized
 
-    def _phrase(self, metric: str, category: str | None) -> str:
-        """Build an explicit question for a metric/category pair."""
+    def _phrase(self, metric: str, category: str | None, period: str | None = None) -> str:
+        """Build an explicit question for a metric/category (/period) triple."""
+        when = f" {period}" if period else ""
         if metric == "health_score":
-            return "What is my financial health score?"
+            verb = "was" if period else "is"
+            return f"What {verb} my financial health score{when}?"
         if metric == "forecast":
             target = f" on {category}" if category else ""
             return f"What is my forecast expense for next month{target}?"
         if metric == "savings":
             target = f" on {category}" if category else ""
-            return f"How can I save more{target}?"
+            return f"How can I save more{target}{when}?"
         if metric == "anomaly":
             target = f" in {category}" if category else ""
-            return f"What unusual spending was detected{target}?"
+            return f"What unusual spending was detected{target}{when}?"
         if metric == "subscriptions":
             return "What subscriptions do I have?"
         target = f" on {category}" if category else ""
-        return f"How much did I spend{target}?"
+        return f"How much did I spend{target}{when}?"
 
     # ---- recording -------------------------------------------------------- #
     def note_turn(
