@@ -7,7 +7,7 @@
 [![Render Frontend](https://img.shields.io/badge/Frontend-Live%20on%20Render-46E3B7?style=for-the-badge&logo=render&logoColor=white)](https://ai-cfo-frontend.onrender.com)
 [![Render Backend](https://img.shields.io/badge/Backend%20API-Live%20on%20Render-black?style=for-the-badge&logo=render&logoColor=white)](https://ai-cfo-backend-nxaf.onrender.com)
 [![CI/CD Pipeline](https://img.shields.io/badge/GitHub%20Actions-CI%2FCD%20Active-2088FF?style=for-the-badge&logo=githubactions&logoColor=white)](https://github.com/NagarjunareddyDONDETI/AI_PERSONAL_CFO/actions)
-[![Tests Passing](https://img.shields.io/badge/Tests-422%20Passed-brightgreen?style=for-the-badge&logo=pytest&logoColor=white)](https://github.com/NagarjunareddyDONDETI/AI_PERSONAL_CFO)
+[![Tests Passing](https://img.shields.io/badge/Tests-516%20Passed-brightgreen?style=for-the-badge&logo=pytest&logoColor=white)](https://github.com/NagarjunareddyDONDETI/AI_PERSONAL_CFO)
 [![License](https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge)](LICENSE)
 
 <br/>
@@ -184,7 +184,7 @@ npm run dev
 
 ## 🧪 Running Automated Tests
 
-The repository includes a comprehensive 422-test suite covering authentication, LangGraph debate nodes, RAG retrieval, caching, voice endpoints, and financial simulations:
+The repository includes a comprehensive 516-test suite covering authentication, LangGraph debate nodes, RAG retrieval, caching, voice endpoints, and financial simulations:
 
 ```bash
 cd backend
@@ -192,7 +192,7 @@ pytest tests -v
 ```
 
 ```
-============================== 422 passed in 79.41s ==============================
+============================== 516 passed in 73.87s ==============================
 ```
 
 ---
