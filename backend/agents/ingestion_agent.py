@@ -20,6 +20,7 @@ from __future__ import annotations
 import io
 import json
 import logging
+import os
 import re
 import time
 from datetime import datetime
@@ -28,6 +29,9 @@ from typing import Any
 import pandas as pd
 
 logger = logging.getLogger("agents.ingestion")
+
+_MAX_PDF_PAGES = int(os.getenv("MAX_PDF_PAGES", "50"))
+_MAX_TRANSACTIONS = int(os.getenv("MAX_TRANSACTIONS_LIMIT", "25000"))
 
 # Columns we will try to map, case-insensitive.
 _DATE_KEYS = {"date", "txn date", "transaction date", "value date", "posting date"}
@@ -136,6 +140,14 @@ def _dataframe_to_transactions(df: pd.DataFrame) -> list[dict]:
     """Map an arbitrary statement DataFrame to clean transactions."""
     if df is None or df.empty:
         raise IngestionError("The file contains no rows.")
+
+    # Bound rows to prevent memory exhaustion on extreme inputs
+    if len(df) > _MAX_TRANSACTIONS:
+        logger.warning(
+            "Statement has %d rows; truncating to %d to preserve memory",
+            len(df), _MAX_TRANSACTIONS,
+        )
+        df = df.iloc[:_MAX_TRANSACTIONS]
 
     # Drop fully-empty columns/rows that spreadsheets often carry.
     df = df.dropna(axis=1, how="all").dropna(axis=0, how="all")
@@ -671,6 +683,10 @@ def _parse_pdf(content: bytes) -> list[dict]:
     try:
         with pdfplumber.open(io.BytesIO(content)) as pdf:
             page_count = len(pdf.pages)
+            if page_count > _MAX_PDF_PAGES:
+                raise IngestionError(
+                    f"PDF has {page_count} pages, which exceeds the maximum limit of {_MAX_PDF_PAGES} pages."
+                )
             # 1) FAST PATH: text extraction (cheap) + heuristic line parsing.
             text = _pdf_extract_text(pdf)
             if text.strip():

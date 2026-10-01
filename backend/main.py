@@ -9,13 +9,16 @@ from the client — that is what made it possible to read or delete anyone's dat
 """
 from __future__ import annotations
 
+import asyncio
 import base64
 import io
 import json
 import logging
 import os
 import secrets
+import threading
 import time
+from collections import OrderedDict
 
 from dotenv import load_dotenv
 from fastapi import (
@@ -85,9 +88,30 @@ app.add_middleware(
 _DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data")
 _SAMPLES_DIR = os.path.join(_DATA_DIR, "sample_statements")
 
-# Last workflow trace per user (Phase 7). In-memory so revisiting the dashboard
-# shows the real per-node timings without re-persisting/polluting score history.
-_LAST_WORKFLOW: dict[str, dict] = {}
+# Last workflow trace per user (Phase 7). Bounded in-memory cache so revisiting
+# the dashboard shows the real per-node timings without unbounded RAM growth.
+_MAX_WORKFLOW_CACHE_SIZE = int(os.getenv("MAX_WORKFLOW_CACHE_SIZE", "128"))
+_LAST_WORKFLOW: OrderedDict[str, dict] = OrderedDict()
+_LAST_WORKFLOW_LOCK = threading.Lock()
+
+def _set_last_workflow(user_id: str, workflow_data: dict) -> None:
+    with _LAST_WORKFLOW_LOCK:
+        _LAST_WORKFLOW[user_id] = workflow_data
+        _LAST_WORKFLOW.move_to_end(user_id)
+        while len(_LAST_WORKFLOW) > _MAX_WORKFLOW_CACHE_SIZE:
+            _LAST_WORKFLOW.popitem(last=False)
+
+def _get_last_workflow(user_id: str) -> dict | None:
+    with _LAST_WORKFLOW_LOCK:
+        val = _LAST_WORKFLOW.get(user_id)
+        if val is not None:
+            _LAST_WORKFLOW.move_to_end(user_id)
+        return val
+
+# Resource and memory bounds for production stability
+_MAX_UPLOAD_SIZE_MB = float(os.getenv("MAX_UPLOAD_SIZE_MB", "15"))
+_MAX_UPLOAD_BYTES = int(_MAX_UPLOAD_SIZE_MB * 1024 * 1024)
+_ANALYSIS_SEMAPHORE = asyncio.Semaphore(int(os.getenv("MAX_CONCURRENT_ANALYSES", "2")))
 
 
 @app.on_event("startup")
@@ -508,7 +532,7 @@ def _process_csv(content: str | bytes, user_id: str, filename: str | None = None
         "total_ms": tracer.total_ms(),
         "format": fmt,
     }
-    _LAST_WORKFLOW[user_id] = result["workflow"]
+    _set_last_workflow(user_id, result["workflow"])
     return result
 
 
@@ -529,11 +553,36 @@ async def upload(user_id: CurrentUserId, file: UploadFile = File(...)) -> dict:
                 + "."
             ),
         )
-    raw = await file.read()
+
+    # Check Content-Length header if provided
+    if file.size and file.size > _MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File exceeds maximum allowed size of {_MAX_UPLOAD_SIZE_MB:.0f}MB.",
+        )
+
+    # Read in bounded chunks to prevent unbounded memory allocation
+    chunk_size = 64 * 1024
+    buffer = bytearray()
+    while True:
+        chunk = await file.read(chunk_size)
+        if not chunk:
+            break
+        buffer.extend(chunk)
+        if len(buffer) > _MAX_UPLOAD_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=f"File exceeds maximum allowed size of {_MAX_UPLOAD_SIZE_MB:.0f}MB.",
+            )
+
+    raw = bytes(buffer)
     if not raw:
         raise HTTPException(status_code=400, detail="The uploaded file is empty.")
-    # Pass raw bytes through; the ingestion layer decodes/decodes per format.
-    return _process_csv(raw, user_id, filename=name or "upload.csv")
+
+    # Throttle concurrent resource-intensive analysis tasks
+    async with _ANALYSIS_SEMAPHORE:
+        # Pass raw bytes through; the ingestion layer decodes/decodes per format.
+        return _process_csv(raw, user_id, filename=name or "upload.csv")
 
 
 @app.get("/samples")
@@ -816,7 +865,7 @@ def workflow_graph() -> dict:
 @app.get("/workflow/trace")
 def workflow_trace(user_id: CurrentUserId) -> dict:
     """Return the workflow trace from the user's last processed upload."""
-    cached = _LAST_WORKFLOW.get(user_id)
+    cached = _get_last_workflow(user_id)
     if cached:
         return cached
     result = database.get_result(user_id)

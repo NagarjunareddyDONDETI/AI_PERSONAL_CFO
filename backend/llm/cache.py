@@ -10,12 +10,16 @@ import hashlib
 import json
 import logging
 import os
+import threading
 import time
+from collections import OrderedDict
 from typing import Optional
 
 from .base import LLMResponse, Message
 
 logger = logging.getLogger("llm.cache")
+
+_DEFAULT_MAX_CACHE_SIZE = int(os.getenv("MAX_LLM_CACHE_SIZE", "512"))
 
 
 def make_key(
@@ -37,34 +41,49 @@ def make_key(
 
 
 class _MemoryCache:
-    """Simple in-process TTL cache."""
+    """Bounded in-process TTL cache with LRU eviction."""
 
-    def __init__(self) -> None:
-        self._store: dict[str, tuple[float, str]] = {}
+    def __init__(self, max_size: int = _DEFAULT_MAX_CACHE_SIZE) -> None:
+        self.max_size = max_size
+        self._store: OrderedDict[str, tuple[float, str]] = OrderedDict()
+        self._lock = threading.Lock()
 
     def get(self, key: str) -> Optional[str]:
-        item = self._store.get(key)
-        if not item:
-            return None
-        expires_at, value = item
-        if expires_at < time.time():
-            self._store.pop(key, None)
-            return None
-        return value
+        with self._lock:
+            item = self._store.get(key)
+            if not item:
+                return None
+            expires_at, value = item
+            if expires_at < time.time():
+                self._store.pop(key, None)
+                return None
+            self._store.move_to_end(key)
+            return value
 
     def set(self, key: str, value: str, ttl: int) -> None:
-        self._store[key] = (time.time() + ttl, value)
+        now = time.time()
+        with self._lock:
+            # Sweep expired entries periodically on writes
+            expired = [k for k, (exp, _) in self._store.items() if exp < now]
+            for k in expired:
+                self._store.pop(k, None)
+
+            self._store[key] = (now + ttl, value)
+            self._store.move_to_end(key)
+            while len(self._store) > self.max_size:
+                self._store.popitem(last=False)
 
     def clear(self) -> None:
-        self._store.clear()
+        with self._lock:
+            self._store.clear()
 
 
 class ResponseCache:
     """Cache facade used by the router."""
 
-    def __init__(self, ttl: int | None = None, redis_url: str | None = None):
+    def __init__(self, ttl: int | None = None, redis_url: str | None = None, max_size: int | None = None):
         self.ttl = ttl if ttl is not None else int(os.getenv("LLM_CACHE_TTL", "900"))
-        self._memory = _MemoryCache()
+        self._memory = _MemoryCache(max_size=max_size or _DEFAULT_MAX_CACHE_SIZE)
         self._redis = None
         url = redis_url if redis_url is not None else os.getenv("REDIS_URL", "")
         if url:

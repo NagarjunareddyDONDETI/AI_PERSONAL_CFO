@@ -33,6 +33,10 @@ def node_ingestion(state: CFOState) -> CFOState:
         else:
             raw = content or ""
     state["transactions"] = parse_statement(raw, filename)
+    # Release large raw inputs from state immediately to free memory
+    state.pop("raw_bytes", None)
+    state.pop("raw_csv_content", None)
+    state.pop("raw_csv_path", None)
     return state
 
 

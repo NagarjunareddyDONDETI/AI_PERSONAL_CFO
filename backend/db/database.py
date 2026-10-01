@@ -21,6 +21,7 @@ import json
 import os
 import sqlite3
 import threading
+from contextlib import contextmanager
 from datetime import datetime, timezone
 
 _DB_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -49,7 +50,8 @@ def db_path() -> str:
     return _DB_PATH
 
 
-def _connect() -> sqlite3.Connection:
+@contextmanager
+def _connect():
     # Read _DB_PATH at call time so tests can point it at a temp file.
     parent = os.path.dirname(_DB_PATH)
     if parent:
@@ -64,7 +66,11 @@ def _connect() -> sqlite3.Connection:
         conn.execute("PRAGMA foreign_keys=ON")
     except sqlite3.DatabaseError:
         pass  # e.g. :memory: or a read-only volume — not worth failing over.
-    return conn
+    try:
+        with conn:
+            yield conn
+    finally:
+        conn.close()
 
 
 def init_db() -> None:
