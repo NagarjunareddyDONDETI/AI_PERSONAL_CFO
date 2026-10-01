@@ -46,6 +46,8 @@ _cache_lock = threading.Lock()
 
 def _init() -> bool:
     global _client, _embed_fn, _available
+    if os.getenv("ENABLE_RAG", "true").strip().lower() in {"false", "0", "no", "off"}:
+        return False
     if _available:
         return True
     with _init_lock:
