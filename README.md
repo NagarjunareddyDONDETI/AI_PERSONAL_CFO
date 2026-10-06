@@ -4,8 +4,8 @@
 
 ### *Autonomous Multi-Agent Wealth Intelligence, 3D Vector Visualizations & Conversational Financial AI*
 
-[![Render Frontend](https://img.shields.io/badge/Frontend-Live%20on%20Render-46E3B7?style=for-the-badge&logo=render&logoColor=white)](https://ai-cfo-frontend.onrender.com)
-[![Render Backend](https://img.shields.io/badge/Backend%20API-Live%20on%20Render-black?style=for-the-badge&logo=render&logoColor=white)](https://ai-cfo-backend-nxaf.onrender.com)
+[![Vercel Frontend](https://img.shields.io/badge/Frontend-Live%20on%20Vercel-000000?style=for-the-badge&logo=vercel&logoColor=white)](https://frontend-tau-dusky-gn8njz3yo4.vercel.app)
+[![Render Backend](https://img.shields.io/badge/Backend%20API-Live%20on%20Render-46E3B7?style=for-the-badge&logo=render&logoColor=white)](https://ai-cfo-backend-nxaf.onrender.com)
 [![CI/CD Pipeline](https://img.shields.io/badge/GitHub%20Actions-CI%2FCD%20Active-2088FF?style=for-the-badge&logo=githubactions&logoColor=white)](https://github.com/NagarjunareddyDONDETI/AI_PERSONAL_CFO/actions)
 [![Tests Passing](https://img.shields.io/badge/Tests-516%20Passed-brightgreen?style=for-the-badge&logo=pytest&logoColor=white)](https://github.com/NagarjunareddyDONDETI/AI_PERSONAL_CFO)
 [![License](https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge)](LICENSE)
@@ -13,7 +13,7 @@
 <br/>
 
 <p align="center">
-  <a href="https://ai-cfo-frontend.onrender.com"><strong>Explore Live Application »</strong></a>
+  <a href="https://frontend-tau-dusky-gn8njz3yo4.vercel.app"><strong>Explore Live Application »</strong></a>
   <br/>
   <a href="https://ai-cfo-backend-nxaf.onrender.com/docs">API Swagger Docs</a>
   ·
@@ -40,7 +40,7 @@ By combining **LangGraph multi-agent consensus workflows**, **ChromaDB vector re
 
 | Component | Cloud Platform | Live URL | Status |
 | :--- | :--- | :--- | :--- |
-| **Frontend Web App** | Render Static CDN | [https://ai-cfo-frontend.onrender.com](https://ai-cfo-frontend.onrender.com) | ![Live](https://img.shields.io/badge/Status-Operational-brightgreen) |
+| **Frontend Web App** | Vercel Edge Network | [https://frontend-tau-dusky-gn8njz3yo4.vercel.app](https://frontend-tau-dusky-gn8njz3yo4.vercel.app) | ![Live](https://img.shields.io/badge/Status-Operational-brightgreen) |
 | **Backend REST API** | Render Web Service | [https://ai-cfo-backend-nxaf.onrender.com](https://ai-cfo-backend-nxaf.onrender.com) | ![Live](https://img.shields.io/badge/Status-Operational-brightgreen) |
 | **Interactive API Docs** | Swagger / OpenAPI | [https://ai-cfo-backend-nxaf.onrender.com/docs](https://ai-cfo-backend-nxaf.onrender.com/docs) | ![Interactive](https://img.shields.io/badge/Docs-Swagger%20UI-blue) |
 
@@ -58,7 +58,7 @@ By combining **LangGraph multi-agent consensus workflows**, **ChromaDB vector re
 | **Multi-Agent & RAG** | ![LangGraph](https://img.shields.io/badge/LangGraph_0.2-1C3C3C?style=flat-square) ![LangChain](https://img.shields.io/badge/LangChain_0.3-1C3C3C?style=flat-square&logo=langchain&logoColor=white) ![ChromaDB](https://img.shields.io/badge/ChromaDB_Vector_Store-orange?style=flat-square) ![ONNX Runtime](https://img.shields.io/badge/ONNX_all--MiniLM--L6--v2-005CED?style=flat-square) |
 | **Voice & Speech AI** | ![Groq Whisper](https://img.shields.io/badge/Groq_Whisper_STT-f55036?style=flat-square) ![Edge TTS](https://img.shields.io/badge/Edge_TTS_gTTS-0078D7?style=flat-square) |
 | **Database & Auth** | ![SQLite WAL](https://img.shields.io/badge/SQLite_3_WAL-07405E?style=flat-square&logo=sqlite&logoColor=white) ![JWT Auth](https://img.shields.io/badge/JWT_Tokens-000000?style=flat-square&logo=json-web-tokens&logoColor=white) ![Bcrypt](https://img.shields.io/badge/Bcrypt_Hashing-4A154B?style=flat-square) |
-| **DevOps & CI/CD** | ![GitHub Actions](https://img.shields.io/badge/GitHub_Actions-2088FF?style=flat-square&logo=github-actions&logoColor=white) ![Render](https://img.shields.io/badge/Render_Cloud-46E3B7?style=flat-square&logo=render&logoColor=white) ![Pytest](https://img.shields.io/badge/Pytest-0A9EDC?style=flat-square&logo=pytest&logoColor=white) |
+| **DevOps & CI/CD** | ![GitHub Actions](https://img.shields.io/badge/GitHub_Actions-2088FF?style=flat-square&logo=github-actions&logoColor=white) ![Vercel](https://img.shields.io/badge/Vercel-000000?style=flat-square&logo=vercel&logoColor=white) ![Render](https://img.shields.io/badge/Render_Cloud-46E3B7?style=flat-square&logo=render&logoColor=white) ![Pytest](https://img.shields.io/badge/Pytest-0A9EDC?style=flat-square&logo=pytest&logoColor=white) |
 
 <br/>
 
