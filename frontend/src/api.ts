@@ -1168,6 +1168,81 @@ export async function speak(text: string): Promise<Blob> {
   return res.blob();
 }
 
+// ---------- Financial Skills & Tool Registry (Hermes-Style) ----------
+export interface FinancialSkill {
+  name: string;
+  description: string;
+  version: string;
+  author: string;
+  category: string;
+  required_tools: string[];
+  required_data: string[];
+  safety_constraints: string[];
+}
+
+export interface FinancialTool {
+  name: string;
+  description: string;
+  category: string;
+  parameters: Record<string, unknown>;
+  requires_data: string[];
+}
+
+export interface ToolExecutionResponse {
+  status: "success" | "error";
+  tool: string;
+  source: string;
+  calculation_timestamp?: string;
+  data?: Record<string, unknown>;
+  error?: string;
+  validation_checks?: {
+    math_verified: boolean;
+    division_by_zero_safe: boolean;
+    bounds_checked: boolean;
+  };
+}
+
+export async function getFinancialSkills(): Promise<{ skills: FinancialSkill[] }> {
+  return handle(await fetch(`${BASE}/skills`));
+}
+
+export async function getFinancialSkillDetails(
+  name: string
+): Promise<{ skill: FinancialSkill; instructions: string }> {
+  return handle(await fetch(`${BASE}/skills/${encodeURIComponent(name)}`));
+}
+
+export async function getFinancialTools(): Promise<{ tools: FinancialTool[] }> {
+  return handle(await fetch(`${BASE}/tools`));
+}
+
+export async function executeDeterministicTool(
+  tool: string,
+  args: Record<string, unknown> = {}
+): Promise<ToolExecutionResponse> {
+  return authSend("/tools/execute", "POST", { tool, args });
+}
+
+export async function runAutonomousSentinels(): Promise<{
+  status: string;
+  daily_anomaly_monitor: Record<string, unknown>;
+  weekly_budget_pulse: Record<string, unknown>;
+  monthly_cfo_report: Record<string, unknown>;
+}> {
+  return authSend("/cron/run-monitors", "POST", {});
+}
+
+export async function getCfoInsights(): Promise<{ insights: MemoryItem[] }> {
+  return authGet("/memories/insights");
+}
+
+export async function getCategorizedMemories(): Promise<{
+  categorized: Record<string, MemoryItem[]>;
+}> {
+  return authGet("/memories/categorized");
+}
+
+
 // The workflow-trace and model-routing visualisations were removed from the UI.
 // Their backend endpoints (/workflow/graph, /workflow/trace, /router/status,
 // /router/provider, /metrics/llm) still exist and remain useful for operations

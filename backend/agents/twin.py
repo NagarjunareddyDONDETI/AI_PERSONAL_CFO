@@ -2,7 +2,7 @@
 
 A deterministic simulation engine that projects a user's current financial
 state into the future. Every number is computed explicitly (no LLM, no random
-noise) so results are reproducible and explainable:
+noise) using Decimal precision so results are reproducible and explainable:
 
   current state → salary growth → expense growth → inflation →
   investment growth → emergency fund → retirement estimate → goal timelines
@@ -11,12 +11,29 @@ Supports multiple named scenarios; the API layer handles save/compare.
 """
 from __future__ import annotations
 
-from typing import Optional
+from decimal import Decimal, ROUND_HALF_UP, InvalidOperation
+from typing import Any, Optional
 
 from pydantic import BaseModel, Field
 
 # Safe withdrawal rate used for the retirement sustainability estimate.
 SAFE_WITHDRAWAL_RATE = 0.04
+
+
+def _to_decimal(val: Any) -> Decimal:
+    if val is None:
+        return Decimal("0.00")
+    if isinstance(val, Decimal):
+        return val
+    try:
+        s = str(val).strip()
+        return Decimal(s) if s else Decimal("0.00")
+    except (InvalidOperation, ValueError, TypeError):
+        return Decimal("0.00")
+
+
+def _round_money(d: Decimal) -> float:
+    return float(d.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
 
 
 class Goal(BaseModel):
@@ -86,75 +103,77 @@ class TwinResult(BaseModel):
     goals: list[GoalTimeline]
 
 
-def _compound_year(corpus: float, annual_contribution: float, annual_return: float) -> float:
-    """Grow a portfolio one year with monthly contributions (end-of-month).
-
-    The corpus is floored at zero each month: an investment portfolio cannot go
-    negative. If contributions are negative (expenses exceed income) the balance
-    draws down to zero and stays there rather than compounding into fantasy debt.
-    """
-    monthly_rate = (1 + annual_return) ** (1 / 12) - 1
-    monthly_contribution = annual_contribution / 12.0
+def _compound_year(corpus: Decimal, annual_contribution: Decimal, annual_return: float) -> Decimal:
+    """Grow a portfolio one year with monthly contributions (end-of-month)."""
+    monthly_rate = Decimal(str((1 + annual_return) ** (1 / 12) - 1))
+    monthly_contribution = annual_contribution / Decimal("12.00")
     value = corpus
+    zero = Decimal("0.00")
     for _ in range(12):
-        value = max(0.0, value * (1 + monthly_rate) + monthly_contribution)
+        value = max(zero, value * (Decimal("1.00") + monthly_rate) + monthly_contribution)
     return value
 
 
 def simulate(params: ScenarioInput) -> TwinResult:
-    """Run the full projection and return a structured, explainable result."""
-    monthly_income = float(params.monthly_income)
-    monthly_expenses = float(params.monthly_expenses)
-    corpus = float(params.current_savings)
+    """Run the full projection and return a structured, explainable result using Decimal math."""
+    monthly_income = _to_decimal(params.monthly_income)
+    monthly_expenses = _to_decimal(params.monthly_expenses)
+    corpus = _to_decimal(params.current_savings)
+
+    salary_growth = Decimal(str(params.salary_growth))
+    expense_growth = Decimal(str(params.expense_growth))
 
     projection: list[YearProjection] = []
-    total_contributed = 0.0
+    total_contributed = Decimal("0.00")
 
     for y in range(1, params.years + 1):
         # Growth applies at the start of each year after year 1.
         if y > 1:
-            monthly_income *= 1 + params.salary_growth
-            monthly_expenses *= 1 + params.expense_growth
+            monthly_income *= (Decimal("1.00") + salary_growth)
+            monthly_expenses *= (Decimal("1.00") + expense_growth)
 
-        annual_income = monthly_income * 12
-        annual_expenses = monthly_expenses * 12
+        annual_income = monthly_income * Decimal("12.00")
+        annual_expenses = monthly_expenses * Decimal("12.00")
         annual_savings = annual_income - annual_expenses
         total_contributed += annual_savings
 
         corpus = _compound_year(corpus, annual_savings, params.investment_return)
         real_factor = (1 + params.inflation) ** y
-        emergency_months = (corpus / monthly_expenses) if monthly_expenses > 0 else 0.0
+        emergency_months = (float(corpus) / float(monthly_expenses)) if monthly_expenses > Decimal("0.00") else 0.0
 
         projection.append(
             YearProjection(
                 year=y,
                 age=(params.current_age + y) if params.current_age is not None else None,
-                annual_income=round(annual_income, 2),
-                annual_expenses=round(annual_expenses, 2),
-                annual_savings=round(annual_savings, 2),
-                invested=round(corpus, 2),
-                net_worth=round(corpus, 2),
-                real_net_worth=round(corpus / real_factor, 2),
+                annual_income=_round_money(annual_income),
+                annual_expenses=_round_money(annual_expenses),
+                annual_savings=_round_money(annual_savings),
+                invested=_round_money(corpus),
+                net_worth=_round_money(corpus),
+                real_net_worth=round(float(corpus) / real_factor, 2),
                 emergency_fund_months=round(emergency_months, 1),
             )
         )
 
-    final_net_worth = projection[-1].net_worth if projection else corpus
-    final_real = projection[-1].real_net_worth if projection else corpus
+    final_net_worth = projection[-1].net_worth if projection else float(corpus)
+    final_real = projection[-1].real_net_worth if projection else float(corpus)
 
     retirement = _retirement(params, projection)
     goals = _goals(params, projection)
+
+    total_growth = final_net_worth - float(params.current_savings) - float(total_contributed)
 
     return TwinResult(
         scenario=params,
         projection=projection,
         final_net_worth=round(final_net_worth, 2),
         final_real_net_worth=round(final_real, 2),
-        total_contributed=round(total_contributed, 2),
-        total_growth=round(final_net_worth - float(params.current_savings) - total_contributed, 2),
+        total_contributed=_round_money(total_contributed),
+        total_growth=round(total_growth, 2),
         retirement=retirement,
         goals=goals,
     )
+
 
 
 def _retirement(params: ScenarioInput, projection: list[YearProjection]) -> RetirementEstimate:

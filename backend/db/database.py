@@ -782,3 +782,60 @@ def delete_goal(goal_id: int, user_id: str) -> bool:
             "DELETE FROM financial_goals WHERE id = ? AND user_id = ?", (goal_id, user_id)
         )
         return cur.rowcount > 0
+
+
+# ---------- CFO Persistent Categorized Memory & Insights ----------
+def get_user_profile(user_id: str) -> dict:
+    """Retrieve structured user financial profile fact sheet."""
+    mems = get_memories(user_id, kind="user_profile", limit=1)
+    if mems:
+        return mems[0].get("data") or {}
+    return {}
+
+
+def set_user_profile(user_id: str, profile_data: dict) -> None:
+    """Store or update structured user financial profile fact sheet."""
+    summary_parts = []
+    if "monthly_income" in profile_data:
+        summary_parts.append(f"Income: Rs.{float(profile_data['monthly_income']):,.0f}")
+    if "risk_tolerance" in profile_data:
+        summary_parts.append(f"Risk: {profile_data['risk_tolerance']}")
+    if "age" in profile_data:
+        summary_parts.append(f"Age: {profile_data['age']}")
+    content = "User Financial Profile: " + (", ".join(summary_parts) if summary_parts else "Default Profile")
+    upsert_memory(user_id, "user_profile", "primary_profile", content, profile_data)
+
+
+def record_cfo_insight(
+    user_id: str,
+    title: str,
+    recommendation: str,
+    confidence: float,
+    source_agent: str,
+    metadata: dict | None = None,
+) -> None:
+    """Log an autonomous CFO insight or recommendation into persistent memory."""
+    mem_key = f"cfo_insight_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
+    data = {
+        "title": title,
+        "recommendation": recommendation,
+        "confidence": round(float(confidence), 2),
+        "source_agent": source_agent,
+        "metadata": metadata or {},
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    content = f"[{source_agent}] {title}: {recommendation} (Confidence: {confidence:.0%})"
+    upsert_memory(user_id, "cfo_insights", mem_key, content, data)
+
+
+def get_categorized_memories(user_id: str) -> dict[str, list[dict]]:
+    """Return all memories grouped by their category/kind."""
+    all_mems = get_memories(user_id, limit=1000)
+    categorized: dict[str, list[dict]] = {}
+    for m in all_mems:
+        kind = m.get("kind", "other")
+        if kind not in categorized:
+            categorized[kind] = []
+        categorized[kind].append(m)
+    return categorized
+

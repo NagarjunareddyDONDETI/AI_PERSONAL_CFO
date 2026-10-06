@@ -4,21 +4,33 @@ import { MemoryByKind, addGoal, addPreference, getMemory } from "../api";
 import GlassCard from "./GlassCard";
 
 const KIND_META: Record<string, { label: string; icon: string; color: string }> = {
-  habit: { label: "Habits", icon: "🔁", color: "#2dd4bf" },
-  recurring: { label: "Recurring", icon: "📅", color: "#38bdf8" },
-  subscription: { label: "Subscriptions", icon: "📺", color: "#a78bfa" },
-  salary: { label: "Salary history", icon: "💵", color: "#4ade80" },
+  cfo_insights: { label: "CFO Autonomous Insights", icon: "🧠", color: "#ec4899" },
+  user_profile: { label: "User Profile", icon: "👤", color: "#818cf8" },
+  financial_goals: { label: "Financial Goals", icon: "🎯", color: "#fbbf24" },
   goal: { label: "Goals", icon: "🎯", color: "#fbbf24" },
   preference: { label: "Preferences", icon: "⚙️", color: "#f472b6" },
+  recurring_commitments: { label: "Recurring Commitments", icon: "💳", color: "#38bdf8" },
+  subscription: { label: "Subscriptions", icon: "📺", color: "#a78bfa" },
+  recurring: { label: "Recurring", icon: "📅", color: "#38bdf8" },
+  financial_habits: { label: "Financial Habits", icon: "🔁", color: "#2dd4bf" },
+  habit: { label: "Habits", icon: "🔁", color: "#2dd4bf" },
+  twin_state: { label: "Twin Simulation State", icon: "🔮", color: "#c084fc" },
+  salary: { label: "Salary history", icon: "💵", color: "#4ade80" },
   conversation_summary: { label: "Remembered topics", icon: "💬", color: "#94a3b8" },
 };
 
 const ORDER = [
+  "cfo_insights",
+  "user_profile",
+  "financial_goals",
   "goal",
   "preference",
+  "recurring_commitments",
   "subscription",
   "recurring",
+  "financial_habits",
   "habit",
+  "twin_state",
   "salary",
   "conversation_summary",
 ];

@@ -59,6 +59,9 @@ from llm.router import router as llm_router  # noqa: E402
 from orchestrator.pipeline import run_pipeline, using_langgraph  # noqa: E402
 from orchestrator.trace import WORKFLOW_NODES, build_graph  # noqa: E402
 from rag import retriever  # noqa: E402
+from skills.skill_registry import skill_registry  # noqa: E402
+from tools.registry import registry as tool_registry  # noqa: E402
+from cron import monitors as cron_monitors  # noqa: E402
 from voice import voice_service  # noqa: E402
 from voice import conversation as voice_conversation  # noqa: E402
 from voice import speech as voice_speech  # noqa: E402
@@ -919,6 +922,84 @@ def clear_memory(user_id: CurrentUserId, kind: str | None = None) -> dict:
     """Clear a user's long-term memory (optionally only one kind)."""
     removed = database.delete_memories(user_id, kind)
     return {"status": "cleared", "removed": removed, "kind": kind}
+
+
+@app.get("/memories/categorized")
+def get_categorized_memories(user_id: CurrentUserId) -> dict:
+    """Return all memories grouped by category."""
+    return {"categorized": database.get_categorized_memories(user_id)}
+
+
+@app.get("/memories/insights")
+def get_cfo_insights(user_id: CurrentUserId) -> dict:
+    """Return autonomous CFO insights and recommendations."""
+    return {"insights": database.get_memories(user_id, kind="cfo_insights", limit=50)}
+
+
+class UserProfileRequest(BaseModel):
+    profile: dict = Field(default_factory=dict)
+
+
+@app.get("/user/profile")
+def get_user_profile(user_id: CurrentUserId) -> dict:
+    """Retrieve structured user profile."""
+    return {"profile": database.get_user_profile(user_id)}
+
+
+@app.post("/user/profile")
+def set_user_profile(req: UserProfileRequest, user_id: CurrentUserId) -> dict:
+    """Store or update user profile."""
+    database.set_user_profile(user_id, req.profile)
+    return {"status": "updated", "profile": req.profile}
+
+
+# ---------- Financial Skills & Tool Registry ----------
+@app.get("/skills")
+def list_skills() -> dict:
+    """List all available standardized financial skills."""
+    return {"skills": skill_registry.list_skills()}
+
+
+@app.get("/skills/{skill_name}")
+def get_skill(skill_name: str) -> dict:
+    """Get detailed instructions and safety constraints for a financial skill."""
+    skill = skill_registry.get_skill(skill_name)
+    if not skill:
+        raise HTTPException(status_code=404, detail=f"Skill '{skill_name}' not found.")
+    return {"skill": skill.to_dict(), "instructions": skill.content}
+
+
+@app.get("/tools")
+def list_tools() -> dict:
+    """List all available deterministic financial tools."""
+    return {"tools": tool_registry.list_tools()}
+
+
+class ToolExecuteRequest(BaseModel):
+    tool: str
+    args: dict = Field(default_factory=dict)
+
+
+@app.post("/tools/execute")
+def execute_tool(req: ToolExecuteRequest, user_id: CurrentUserId) -> dict:
+    """Execute a deterministic financial calculation tool and return verified output."""
+    return tool_registry.execute(req.tool, req.args)
+
+
+# ---------- Autonomous Monitoring (Cron Sentinel) ----------
+@app.post("/cron/run-monitors")
+def run_autonomous_monitors(user_id: CurrentUserId) -> dict:
+    """Trigger autonomous daily, weekly, and monthly CFO monitors for current user."""
+    daily = cron_monitors.run_daily_anomaly_monitor(user_id)
+    weekly = cron_monitors.run_weekly_budget_pulse(user_id)
+    monthly = cron_monitors.run_monthly_cfo_report(user_id)
+    return {
+        "status": "completed",
+        "daily_anomaly_monitor": daily,
+        "weekly_budget_pulse": weekly,
+        "monthly_cfo_report": monthly,
+    }
+
 
 
 # ---------- Phase 3: Digital Financial Twin ----------

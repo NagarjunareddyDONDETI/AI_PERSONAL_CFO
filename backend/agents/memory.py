@@ -22,12 +22,18 @@ from rag import retriever
 logger = logging.getLogger("agents.memory")
 
 KINDS = [
+    "user_profile",
+    "financial_goals",
+    "recurring_commitments",
+    "financial_habits",
+    "twin_state",
+    "cfo_insights",
+    "preference",
+    "goal",
     "habit",
     "recurring",
     "subscription",
     "salary",
-    "goal",
-    "preference",
     "conversation_summary",
 ]
 
@@ -247,15 +253,28 @@ def summarize_conversation(user_id: str, history: list[dict], max_turns: int = 1
     return summary
 
 
-def recall_context(user_id: str, max_items: int = 12) -> str:
+def recall_context(user_id: str, max_items: int = 16) -> str:
     """Build a compact durable-memory string to inject into the copilot prompt."""
     mems = database.get_memories(user_id)
     if not mems:
         return ""
     # Prioritise the most decision-relevant kinds.
-    priority = {"preference": 0, "goal": 1, "subscription": 2, "habit": 3,
-                "recurring": 4, "salary": 5, "conversation_summary": 6}
-    mems.sort(key=lambda m: priority.get(m["kind"], 9))
+    priority = {
+        "user_profile": 0,
+        "preference": 1,
+        "goal": 2,
+        "financial_goals": 2,
+        "cfo_insights": 3,
+        "subscription": 4,
+        "recurring_commitments": 4,
+        "habit": 5,
+        "financial_habits": 5,
+        "recurring": 6,
+        "twin_state": 7,
+        "salary": 8,
+        "conversation_summary": 9,
+    }
+    mems.sort(key=lambda m: priority.get(m["kind"], 10))
     lines = [f"- ({m['kind']}) {m['content']}" for m in mems[:max_items]]
     return "\n".join(lines)
 

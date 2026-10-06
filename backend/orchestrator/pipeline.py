@@ -23,21 +23,31 @@ logger = logging.getLogger("orchestrator.pipeline")
 
 # --- Nodes ---
 def node_ingestion(state: CFOState) -> CFOState:
-    filename = state.get("filename")
+    filename = state.get("filename") or "statement.csv"
     raw = state.get("raw_bytes")
     if raw is None:
         content = state.get("raw_csv_content")
         if content is None and state.get("raw_csv_path"):
             with open(state["raw_csv_path"], "rb") as fh:
                 raw = fh.read()
+        elif isinstance(content, str):
+            raw = content.encode("utf-8")
         else:
-            raw = content or ""
-    state["transactions"] = parse_statement(raw, filename)
+            raw = content or b""
+    elif isinstance(raw, str):
+        raw = raw.encode("utf-8")
+
+    from ingestion import get_document_parser
+    parser = get_document_parser()
+    validated_txns = parser.parse(raw, filename=filename)
+    state["transactions"] = [vt.to_dict() for vt in validated_txns]
+
     # Release large raw inputs from state immediately to free memory
     state.pop("raw_bytes", None)
     state.pop("raw_csv_content", None)
     state.pop("raw_csv_path", None)
     return state
+
 
 
 def node_categorization(state: CFOState) -> CFOState:

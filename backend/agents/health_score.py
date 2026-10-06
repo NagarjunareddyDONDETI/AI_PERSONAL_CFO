@@ -5,6 +5,25 @@ this number, only narrate it.
 """
 from __future__ import annotations
 
+from decimal import Decimal, ROUND_HALF_UP, InvalidOperation
+from typing import Any
+
+
+def _to_decimal(val: Any) -> Decimal:
+    if val is None:
+        return Decimal("0.00")
+    if isinstance(val, Decimal):
+        return val
+    try:
+        s = str(val).strip()
+        return Decimal(s) if s else Decimal("0.00")
+    except (InvalidOperation, ValueError, TypeError):
+        return Decimal("0.00")
+
+
+def _round_money(d: Decimal) -> float:
+    return float(d.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+
 
 def calculate_health_score(
     income: float,
@@ -13,18 +32,29 @@ def calculate_health_score(
     emergency_fund_months: float,
     active_emis: int,
 ) -> tuple[int, float]:
-    """Return (score, savings_rate). Exact formula from the spec."""
+    """Return (score, savings_rate). Exact formula from the spec using Decimal math."""
+    inc = max(Decimal("0.00"), _to_decimal(income))
+    exp = max(Decimal("0.00"), _to_decimal(expenses))
+    savings_rate = (inc - exp) / inc if inc > Decimal("0.00") else Decimal("0.00")
+
     score = 100
-    savings_rate = (income - expenses) / income if income > 0 else 0.0
-    if savings_rate < 0.10:
+    if savings_rate < Decimal("0.10"):
         score -= 30
-    elif savings_rate < 0.20:
+    elif savings_rate < Decimal("0.20"):
         score -= 15
-    score -= min(anomalies_count * 10, 30)
-    if emergency_fund_months < 3:
+
+    anom_cnt = int(anomalies_count or 0)
+    score -= min(anom_cnt * 10, 30)
+
+    ef_months = _to_decimal(emergency_fund_months)
+    if ef_months < Decimal("3.0"):
         score -= 20
-    score -= min(active_emis * 5, 15)
-    return max(0, min(100, score)), savings_rate
+
+    emis = int(active_emis or 0)
+    score -= min(emis * 5, 15)
+
+    final_score = max(0, min(100, score))
+    return final_score, round(float(savings_rate), 4)
 
 
 def build_health_score(
@@ -53,26 +83,28 @@ def build_health_score(
     latest = scored[-1]
     monthly_income = monthly_summary.get("monthly_income", {})
     monthly_expenses = monthly_summary.get("monthly_expenses", {})
-    income = monthly_income.get(latest, 0.0)
-    expenses = monthly_expenses.get(latest, 0.0)
+    income_dec = _to_decimal(monthly_income.get(latest, 0.0))
+    expenses_dec = _to_decimal(monthly_expenses.get(latest, 0.0))
 
     # Estimate emergency fund from average monthly surplus if not supplied.
-    if emergency_fund_months == 0.0:
+    ef_dec = _to_decimal(emergency_fund_months)
+    if ef_dec == Decimal("0.00"):
         surpluses = [
-            monthly_income.get(m, 0.0) - monthly_expenses.get(m, 0.0)
+            _to_decimal(monthly_income.get(m, 0.0)) - _to_decimal(monthly_expenses.get(m, 0.0))
             for m in scored
         ]
-        total_surplus = sum(s for s in surpluses if s > 0)
-        # Averaging over partial months deflates the denominator and inflates
-        # the resulting number of months of cover.
+        total_surplus = sum((s for s in surpluses if s > Decimal("0.00")), Decimal("0.00"))
         avg_expense = (
-            sum(monthly_expenses.get(m, 0.0) for m in scored) / len(scored)
-        ) or 1.0
-        emergency_fund_months = round(total_surplus / avg_expense, 2)
+            sum((_to_decimal(monthly_expenses.get(m, 0.0)) for m in scored), Decimal("0.00"))
+            / Decimal(str(len(scored)))
+        ) if scored else Decimal("1.00")
+        if avg_expense == Decimal("0.00"):
+            avg_expense = Decimal("1.00")
+        ef_dec = total_surplus / avg_expense
 
-    anomalies_count = len(anomalies)
+    anomalies_count = len(anomalies or [])
     score, savings_rate = calculate_health_score(
-        income, expenses, anomalies_count, emergency_fund_months, active_emis
+        float(income_dec), float(expenses_dec), anomalies_count, float(ef_dec), active_emis
     )
 
     if score >= 75:
@@ -84,12 +116,13 @@ def build_health_score(
 
     return {
         "score": score,
-        "savings_rate": round(savings_rate, 4),
-        "income": round(income, 2),
-        "expenses": round(expenses, 2),
+        "savings_rate": savings_rate,
+        "income": _round_money(income_dec),
+        "expenses": _round_money(expenses_dec),
         "anomalies_count": anomalies_count,
-        "emergency_fund_months": emergency_fund_months,
+        "emergency_fund_months": _round_money(ef_dec),
         "active_emis": active_emis,
         "reference_month": latest,
         "rating": rating,
     }
+

@@ -25,6 +25,7 @@ frontend/vite.config.d.ts
 
 # Local dev server logs
 .logs/
+.vercel/
 
 # Hands-free voice runtime: status file, stop flag, service log. The log can
 # contain transcribed questions when VOICE_DEBUG=true.

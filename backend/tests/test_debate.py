@@ -41,10 +41,10 @@ def _no_llm(monkeypatch):
     monkeypatch.setattr(decider.llm_client, "is_configured", lambda: False)
 
 
-def test_panel_has_seven_specialists():
-    assert len(PANEL) == 7
-    # list_agents adds the Final Decision Agent → 8 total.
-    assert len(list_agents()) == 8
+def test_panel_has_eight_specialists():
+    assert len(PANEL) == 8
+    # list_agents adds the Final Decision Agent → 9 total.
+    assert len(list_agents()) == 9
 
 
 def test_each_agent_produces_valid_opinion(data):
@@ -59,12 +59,12 @@ def test_each_agent_produces_valid_opinion(data):
 
 def test_run_debate_full(data):
     out = run_debate(data, "Should I invest now?")
-    assert len(out["opinions"]) == 7
-    assert out["meta"]["agent_count"] == 7
+    assert len(out["opinions"]) == 8
+    assert out["meta"]["agent_count"] == 8
     decision = out["decision"]
     assert 0.0 <= decision["consensus_confidence"] <= 1.0
     assert decision["summary"]
-    assert len(decision["priorities"]) == 7
+    assert len(decision["priorities"]) == 8
     # Priorities are ranked by confidence (descending).
     confs = [p["confidence"] for p in decision["priorities"]]
     assert confs == sorted(confs, reverse=True)
@@ -72,7 +72,7 @@ def test_run_debate_full(data):
 
 def test_fallback_path_matches_shape(data):
     out = _run_fallback(data, None)
-    assert len(out["opinions"]) == 7
+    assert len(out["opinions"]) == 8
     assert "decision" in out
 
 

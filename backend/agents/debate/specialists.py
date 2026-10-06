@@ -162,6 +162,24 @@ def _tax(data: dict):
     return stance, summary, points, conf
 
 
+def _debt(data: dict):
+    hs = _hs(data)
+    emis = int(hs.get("active_emis", 0) or 0)
+    income = float(hs.get("income", 0) or 0)
+    expenses = float(hs.get("expenses", 0) or 0)
+    surplus = max(0.0, income - expenses)
+    points = [f"Active EMIs: {emis}", f"Monthly surplus available for debt reduction: {_inr(surplus)}."]
+    if emis > 0:
+        stance = "Accelerate debt payoff"
+        summary = f"{emis} active EMI(s) consume monthly cashflow; use Avalanche (highest rate first) to clear debt faster."
+        conf = 0.82
+    else:
+        stance = "Zero high-interest debt"
+        summary = "No active high-interest EMIs detected; debt obligations are clear."
+        conf = 0.85
+    return stance, summary, points, conf if hs else 0.4
+
+
 def _planner(data: dict):
     hs = _hs(data)
     ef = float(hs.get("emergency_fund_months", 0) or 0)
@@ -195,6 +213,8 @@ PANEL: list[SpecialistAgent] = [
                     "discretionary spending and lifestyle habits", _lifestyle),
     SpecialistAgent("Budget Agent", "Budget Planner", "📊",
                     "budget balance and the 50/30/20 needs/wants/savings split", _budget),
+    SpecialistAgent("Debt Agent", "Debt Specialist", "💳",
+                    "debt obligations, interest burden, and loan payoff acceleration", _debt),
     SpecialistAgent("Tax Agent", "Tax Specialist", "🧾",
                     "tax efficiency and deduction opportunities (general guidance only)", _tax),
     SpecialistAgent("Financial Planner", "Certified Planner", "🧭",
