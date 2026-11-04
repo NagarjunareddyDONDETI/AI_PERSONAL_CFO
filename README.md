@@ -4,6 +4,7 @@
 
 ### *Autonomous Multi-Agent Wealth Intelligence, Deterministic Decimal Engine, RAGFlow Knowledge & Model Context Protocol (MCP)*
 
+[![Coolify Deploy](https://img.shields.io/badge/Coolify-Deploy-FF6B6B?style=for-the-badge&logo=coolify&logoColor=white)](https://coolify.io)
 [![Vercel Frontend](https://img.shields.io/badge/Frontend-Live%20on%20Vercel-000000?style=for-the-badge&logo=vercel&logoColor=white)](https://frontend-tau-dusky-gn8njz3yo4.vercel.app)
 [![Render Frontend](https://img.shields.io/badge/Frontend-Live%20on%20Render-46E3B7?style=for-the-badge&logo=render&logoColor=white)](https://ai-cfo-frontend.onrender.com)
 [![Render Backend](https://img.shields.io/badge/Backend%20API-Live%20on%20Render-46E3B7?style=for-the-badge&logo=render&logoColor=white)](https://ai-cfo-backend-nxaf.onrender.com)
@@ -24,6 +25,8 @@
   ·
   <a href="#-getting-started-locally">Local Setup</a>
   ·
+  <a href="#-deployment">Deployment</a>
+  ·
   <a href="#-features">Features</a>
   ·
   <a href="docs/mcp-server-guide.md">MCP Server</a>
@@ -40,11 +43,12 @@
 **AI Personal CFO (FINZO)** is an enterprise-grade financial intelligence platform designed to replace conventional, passive budgeting apps with an **autonomous committee of specialized AI financial agents** backed by a **100% deterministic mathematical calculation engine**.
 
 ### Core Non-Negotiable Invariants:
-1. **THE LLM NEVER DOES FINANCIAL MATH**: All monetary computations (cashflow, savings rates, debt payoff timelines, compound interest, health scoring, and forecasts) use pure Python `Decimal` arithmetic with `ROUND_HALF_UP`. The LLM only explains verified outputs.
-2. **RAGFlow is OPTIONAL & Isolated**: Document layout parsing and regulatory knowledge retrieval integrate behind clean adapter interfaces with instant zero-dependency local fallbacks (`LocalParser` and `NullKnowledgeBase`).
-3. **Single Source of Structured Truth**: The Financial Twin, user accounts, transactions, and goals live strictly in the database (SQLite WAL / PostgreSQL).
-4. **Documents are DATA, Never Instructions**: Document text is strictly untrusted and sanitized against prompt-injection attacks.
-5. **Model Context Protocol (MCP) Support**: Exposes the deterministic financial calculation engine to external autonomous agents (NousResearch Hermes Agent, Claude Desktop, Cursor) via standard JSON-RPC 2.0.
+
+1. **THE LLM NEVER DOES FINANCIAL MATH** — All monetary computations (cashflow, savings rates, debt payoff timelines, compound interest, health scoring, and forecasts) use pure Python `Decimal` arithmetic with `ROUND_HALF_UP`. The LLM only explains verified outputs.
+2. **RAGFlow is OPTIONAL & Isolated** — Document layout parsing and regulatory knowledge retrieval integrate behind clean adapter interfaces with instant zero-dependency local fallbacks (`LocalParser` and `NullKnowledgeBase`).
+3. **Single Source of Structured Truth** — The Financial Twin, user accounts, transactions, and goals live strictly in the database (SQLite WAL / PostgreSQL).
+4. **Documents are DATA, Never Instructions** — Document text is strictly untrusted and sanitized against prompt-injection attacks.
+5. **Model Context Protocol (MCP) Support** — Exposes the deterministic financial calculation engine to external autonomous agents (NousResearch Hermes Agent, Claude Desktop, Cursor) via standard JSON-RPC 2.0.
 
 ---
 
@@ -72,11 +76,11 @@
 | **Multi-Agent & RAG** | ![LangGraph](https://img.shields.io/badge/LangGraph_0.2-1C3C3C?style=flat-square) ![MCP](https://img.shields.io/badge/Model_Context_Protocol-MCP_2024--11--05-blueviolet?style=flat-square) ![ChromaDB](https://img.shields.io/badge/ChromaDB_Vector_Store-orange?style=flat-square) ![RAGFlow](https://img.shields.io/badge/RAGFlow-Optional_DeepDoc-purple?style=flat-square) |
 | **Voice & Speech AI** | ![Groq Whisper](https://img.shields.io/badge/Groq_Whisper_STT-f55036?style=flat-square) ![Edge TTS](https://img.shields.io/badge/Edge_TTS_gTTS-0078D7?style=flat-square) |
 | **Database & Auth** | ![SQLite WAL](https://img.shields.io/badge/SQLite_3_WAL-07405E?style=flat-square&logo=sqlite&logoColor=white) ![JWT Auth](https://img.shields.io/badge/JWT_Tokens-000000?style=flat-square&logo=json-web-tokens&logoColor=white) ![PBKDF2](https://img.shields.io/badge/PBKDF2_SHA256-600k_Iterations-critical?style=flat-square) |
-| **DevOps & CI/CD** | ![GitHub Actions](https://img.shields.io/badge/GitHub_Actions-2088FF?style=flat-square&logo=github-actions&logoColor=white) ![Vercel](https://img.shields.io/badge/Vercel-000000?style=flat-square&logo=vercel&logoColor=white) ![Render](https://img.shields.io/badge/Render_Cloud-46E3B7?style=flat-square&logo=render&logoColor=white) ![Pytest](https://img.shields.io/badge/Pytest-0A9EDC?style=flat-square&logo=pytest&logoColor=white) |
+| **DevOps & CI/CD** | ![GitHub Actions](https://img.shields.io/badge/GitHub_Actions-2088FF?style=flat-square&logo=github-actions&logoColor=white) ![Vercel](https://img.shields.io/badge/Vercel-000000?style=flat-square&logo=vercel&logoColor=white) ![Render](https://img.shields.io/badge/Render_Cloud-46E3B7?style=flat-square&logo=render&logoColor=white) ![Docker](https://img.shields.io/badge/Docker-2496ED?style=flat-square&logo=docker&logoColor=white) ![Pytest](https://img.shields.io/badge/Pytest-0A9EDC?style=flat-square&logo=pytest&logoColor=white) |
 
 <br/>
 
-<img src="https://skillicons.dev/icons?i=react,ts,tailwind,threejs,fastapi,py,sqlite,githubactions" alt="Tech Stack Icons" />
+<img src="https://skillicons.dev/icons?i=react,ts,tailwind,threejs,fastapi,py,sqlite,githubactions,docker" alt="Tech Stack Icons" />
 
 </div>
 
@@ -163,6 +167,7 @@ User financial decisions undergo a structured, data-grounded debate between spec
 - **Node.js**: v18.0+ or v20.0+
 - **Python**: v3.11+ or v3.12+
 - **Git**
+- **Docker** (optional, for containerized local run)
 
 ### 1. Clone the Repository
 ```bash
@@ -172,7 +177,7 @@ cd AI_PERSONAL_CFO
 
 ---
 
-### 2. Backend Setup
+### 2. Backend Setup (Native)
 ```bash
 cd backend
 
@@ -194,7 +199,7 @@ uvicorn main:app --reload --host 0.0.0.0 --port 8000
 
 ---
 
-### 3. Frontend Setup
+### 3. Frontend Setup (Native)
 ```bash
 cd frontend
 
@@ -205,6 +210,20 @@ npm install
 npm run dev
 ```
 *Frontend will be running at: `http://localhost:5173`*
+
+---
+
+### 4. One-Command Local Run (Docker Compose)
+```bash
+# From the repo root
+docker compose up -d --build
+```
+This builds both services and brings up:
+- **Frontend** at `http://localhost` (port 80)
+- **Backend API** at `http://localhost:8000`
+- Data persists in the Docker volume `ai-cfo-data`
+
+Stop with `docker compose down`.
 
 ---
 
@@ -241,6 +260,69 @@ pytest tests -v
 
 ---
 
+## 🐳 Deployment
+
+This project includes production-ready Docker images and a `docker-compose.yml` that work out of the box with **Coolify**, **Docker Compose**, or any container orchestrator.
+
+### Quick Deploy to Coolify
+
+1. **Add a new Resource** → **Docker Compose**
+2. **Repository**: `https://github.com/NagarjunareddyDONDETI/AI_PERSONAL_CFO.git`
+3. **Branch**: `main`
+4. **Compose file path**: `docker-compose.yml`
+5. **Environment variables** (set in Coolify UI):
+
+| Variable | Required | Description |
+|---|---|---|
+| `AUTH_SECRET` | **Yes** | 32+ char secret for JWT signing. Generate: `python -c "import secrets; print(secrets.token_urlsafe(48))"` |
+| `GROQ_API_KEY` | No | Groq API key for cloud LLM/STT |
+| `OPENROUTER_API_KEY` | No | OpenRouter API key for model access |
+| `GITHUB_TOKEN` | No | GitHub Models token |
+| `GEMINI_API_KEY` | No | Google Gemini API key |
+| `ALLOWED_ORIGINS` | Production | Comma-separated frontend URLs (e.g., `https://cfo.example.com`) |
+
+6. **Deploy** — Coolify will:
+   - Build the backend (`backend/Dockerfile`) and frontend (`frontend/Dockerfile`)
+   - Provision a persistent volume `ai-cfo-data` for SQLite at `/var/data`
+   - Link the services so `BACKEND_URL=http://backend:8000` resolves internally
+   - Issue SSL certs if you configure a domain
+
+> **Note**: The default `docker-compose.yml` uses SQLite on a Docker volume. For PostgreSQL, swap the backend image for a pg-enabled variant and add a `db` service.
+
+### Manual Docker Compose (Any Host)
+```bash
+# Clone & cd into the repo
+git clone https://github.com/NagarjunareddyDONDETI/AI_PERSONAL_CFO.git
+cd AI_PERSONAL_CFO
+
+# Create a .env file with your secrets (never commit this!)
+cat > .env <<'EOF'
+AUTH_SECRET=your-32-plus-char-secret-here
+GROQ_API_KEY=sk-...
+OPENROUTER_API_KEY=sk-...
+EOF
+
+# Launch
+docker compose up -d --build
+```
+
+### Environment Variables Reference
+
+| Variable | Default | Notes |
+|---|---|---|
+| `AUTH_SECRET` | *(random per boot)* | **Required in production** — stable secret so tokens survive restarts. |
+| `CFO_DB_PATH` | `/var/data/cfo.db` | Override to point at a mounted volume. |
+| `CFO_DATA_DIR` | `/var/data` | Alternative to `CFO_DB_PATH`. |
+| `DEFAULT_PROVIDER` | `auto` | LLM failover chain: `groq,github,openrouter,ollama,gemini`. |
+| `ENABLE_RAG` | `false` | Set `true` if you want ChromaDB embeddings (uses more RAM). |
+| `ALLOWED_ORIGINS` | `*` | **Set to your frontend URL in production** (CORS). |
+| `MAX_UPLOAD_SIZE_MB` | `15` | File upload ceiling. |
+| `MAX_CONCURRENT_ANALYSES` | `2` | Throttle CPU-heavy pipelines. |
+| `GROQ_API_KEY` / `OPENROUTER_API_KEY` / `GITHUB_TOKEN` / `GEMINI_API_KEY` | — | Cloud LLM providers (any one enables the chain). |
+| `OLLAMA_BASE_URL` | `http://localhost:11434` | Local LLM endpoint (optional). |
+
+---
+
 ## 🔄 CI/CD & Deployment Pipeline
 
 This repository is configured with an automated GitHub Actions CI/CD workflow located at [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml):
@@ -249,11 +331,14 @@ This repository is configured with an automated GitHub Actions CI/CD workflow lo
 - **Continuous Deployment to Render & Vercel**: Triggers instant zero-downtime rolling deploys upon merging to `main`.
 - **Post-Deploy Smoke Testing**: Verifies live endpoint health and availability automatically.
 
+Coolify can watch the same `main` branch and re-deploy on push using the Docker Compose file.
+
 ---
 
 ## 🤝 Contributing
 
 Contributions, issues, and feature requests are welcome!
+
 1. Fork the Project (`https://github.com/NagarjunareddyDONDETI/AI_PERSONAL_CFO/fork`)
 2. Create your Feature Branch (`git checkout -b feature/AmazingFeature`)
 3. Commit your Changes (`git commit -m 'Add some AmazingFeature'`)

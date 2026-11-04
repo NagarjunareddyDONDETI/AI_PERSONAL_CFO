@@ -1,0 +1,38 @@
+# nginx template. entrypoint.sh substitutes ${BACKEND_URL} from the container env
+# before nginx starts.
+#
+# BACKEND_URL = the backend's reachable URL, e.g. http://ai-personal-cfo-backend:8000
+#   In Coolify, link the frontend service to the backend service and set this to
+#   the backend's internal URL.
+
+server {
+    listen 80;
+    server_name _;
+
+    # Resolver for internal Docker DNS (127.0.0.11 is Docker's embedded DNS).
+    # Using a variable in proxy_pass requires a resolver so nginx can re-resolve
+    # the hostname if it changes on container restart.
+    resolver 127.0.0.11 valid=10s;
+
+    root /usr/share/nginx/html;
+    index index.html;
+
+    # SPA routing: serve index.html for any non-asset path.
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    # Proxy /api/foo -> ${BACKEND_URL}/foo
+    location /api/ {
+        proxy_pass ${BACKEND_URL}/;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+    }
+}
